@@ -1,0 +1,1 @@
+ALTER TABLE "document_shares" ADD COLUMN "token_encrypted" text NOT NULL;

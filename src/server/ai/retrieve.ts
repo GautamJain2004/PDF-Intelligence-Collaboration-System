@@ -57,7 +57,7 @@ const MAX_CONTEXT_TOKENS = 6000;
  */
 const RRF_K = 60;
 
-type CandidateRow = {
+export type CandidateRow = {
   id: string;
   chunk_index: number;
   page_from: number;
@@ -140,7 +140,9 @@ async function keywordSearch(
  * highly beats one that only a single retriever loves — which is exactly the
  * behaviour we want.
  */
-function fuse(lists: CandidateRow[][]): Map<string, { row: CandidateRow; score: number }> {
+export function fuse(
+  lists: CandidateRow[][],
+): Map<string, { row: CandidateRow; score: number }> {
   const fused = new Map<string, { row: CandidateRow; score: number }>();
 
   for (const list of lists) {

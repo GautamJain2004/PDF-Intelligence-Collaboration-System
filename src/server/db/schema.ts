@@ -205,6 +205,11 @@ export const documentShares = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     tokenHash: text('token_hash').notNull(),
+    /**
+     * AES-256-GCM ciphertext of the same token, so the owner can redisplay the
+     * link. The key lives in AUTH_SECRET, never in the database.
+     */
+    tokenEncrypted: text('token_encrypted').notNull(),
     invitedEmail: text('invited_email'),
     role: shareRoleEnum('role').notNull().default('commenter'),
     expiresAt: timestamp('expires_at', { withTimezone: true }),
