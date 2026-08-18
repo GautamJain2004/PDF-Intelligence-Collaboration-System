@@ -3,11 +3,19 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { FileText, LogOut, Moon, Sun } from 'lucide-react';
+import { FileText, LogOut, Moon, Settings, Sun } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
 import { Avatar } from '@/components/ui/misc';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { apiFetch } from '@/lib/fetcher';
 
 const THEME_KEY = 'pdfiq-theme';
@@ -85,24 +93,54 @@ export function AppHeader({
         <div className="ml-auto flex items-center gap-1.5">
           <ThemeToggle />
 
-          <div className="mx-1 hidden items-center gap-2 sm:flex">
-            <Avatar name={user.name} size="sm" />
-            <div className="leading-tight">
-              <p className="text-xs font-medium">{user.name}</p>
-              <p className="text-[11px] text-muted-foreground">{user.email}</p>
-            </div>
-          </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={`Settings for ${user.name}`}
+              >
+                <Settings className="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
 
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={signOut}
-            loading={signingOut}
-            aria-label="Sign out"
-          >
-            <LogOut className="size-4" />
-            <span className="hidden sm:inline">Sign out</span>
-          </Button>
+            <DropdownMenuContent align="end" className="w-64">
+              <DropdownMenuLabel className="py-2">
+                <div className="flex items-center gap-2.5">
+                  <Avatar name={user.name} />
+                  <div className="min-w-0 leading-tight">
+                    <p className="truncate text-sm font-medium">{user.name}</p>
+                    <p
+                      className="truncate text-xs text-muted-foreground"
+                      title={user.email}
+                    >
+                      {user.email}
+                    </p>
+                  </div>
+                </div>
+              </DropdownMenuLabel>
+
+              <DropdownMenuSeparator />
+
+              <DropdownMenuItem
+                destructive
+                disabled={signingOut}
+                onSelect={(event) => {
+                  /*
+                   * Radix closes the menu on select by default. Held open here
+                   * so the pending label is actually visible, and so a failed
+                   * sign-out leaves the user somewhere sensible rather than
+                   * back on a header that looks untouched.
+                   */
+                  event.preventDefault();
+                  void signOut();
+                }}
+              >
+                <LogOut className="size-4" />
+                {signingOut ? 'Signing out…' : 'Sign out'}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
     </header>

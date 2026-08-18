@@ -73,13 +73,16 @@ export default async function SharePage({
     );
   }
 
+  // No app header on the share route, so the workspace gets the full viewport.
   return (
-    <DocumentWorkspace
-      documentId={share.documentId}
-      filename={share.filename}
-      canComment={share.role === 'commenter'}
-      viewerName={guest.displayName}
-      isOwner={false}
-    />
+    <div className="h-dvh">
+      <DocumentWorkspace
+        documentId={share.documentId}
+        filename={share.filename}
+        canComment={share.role === 'commenter'}
+        viewerName={guest.displayName}
+        isOwner={false}
+      />
+    </div>
   );
 }

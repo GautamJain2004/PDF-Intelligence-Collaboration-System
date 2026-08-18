@@ -37,23 +37,53 @@ const serverEnvSchema = z.object({
   SUPABASE_STORAGE_BUCKET: z.string().min(1).default('pdfs'),
 
   // --- AI -------------------------------------------------------------------
-  GOOGLE_GENERATIVE_AI_API_KEY: z.string().min(1, 'Gemini API key is required'),
-  /*
-   * Defaults verified against a live key. Note that Google's model *listing*
-   * endpoint is not a reliable guide to availability: `gemini-2.5-flash-lite`
-   * is still listed but returns 404 ("no longer available to new users") on
-   * generateContent. The 3.5 family is current and confirmed working.
+  /**
+   * OpenAI key. Server-only; powers summaries, chat, and embeddings.
+   *
+   * Gemini was the original choice for its free tier, but that tier caps
+   * `generate_content` at 20 requests per day per model — one ingest plus a
+   * short conversation exhausts it, so a deployed demo starts returning 429
+   * almost immediately.
    */
-  GEMINI_CHAT_MODEL: z.string().min(1).default('gemini-3.5-flash'),
-  GEMINI_FAST_MODEL: z.string().min(1).default('gemini-3.5-flash-lite'),
-  GEMINI_EMBEDDING_MODEL: z.string().min(1).default('gemini-embedding-001'),
+  OPENAI_API_KEY: z.string().min(1, 'OPENAI_API_KEY is required'),
+  OPENAI_CHAT_MODEL: z.string().min(1).default('gpt-4.1-mini'),
+  OPENAI_FAST_MODEL: z.string().min(1).default('gpt-4.1-nano'),
+  /**
+   * Must support a 768-dimension output to match the `vector(768)` columns.
+   * The text-embedding-3-* models do, via Matryoshka truncation.
+   */
+  OPENAI_EMBEDDING_MODEL: z.string().min(1).default('text-embedding-3-small'),
 
   // --- App ------------------------------------------------------------------
   APP_URL: urlish.default('http://localhost:3000'),
 
   // --- Email (optional; sharing degrades gracefully without it) -------------
-  RESEND_API_KEY: z.string().min(1).optional(),
+  /**
+   * Sender identity, e.g. `PDF Intelligence <you@gmail.com>`. Required by both
+   * transports below — a message with no From is undeliverable.
+   */
   EMAIL_FROM: z.string().min(1).optional(),
+
+  /*
+   * Transport A — SMTP (preferred).
+   *
+   * Chosen because it can deliver to ARBITRARY recipients with no domain
+   * purchase. Resend's shared `onboarding@resend.dev` sender is sandboxed: with
+   * no verified domain it rejects every recipient except the Resend account
+   * owner's own address, which makes real invite emails impossible. A Gmail App
+   * Password has no such restriction (~500 recipients/day).
+   *
+   * Host and port default to Gmail's submission endpoint so a working setup
+   * needs only SMTP_USER and SMTP_PASS.
+   */
+  SMTP_HOST: z.string().min(1).default('smtp.gmail.com'),
+  SMTP_PORT: z.coerce.number().int().positive().default(465),
+  SMTP_USER: z.string().min(1).optional(),
+  /** Gmail App Password (16 chars), NOT the account password. */
+  SMTP_PASS: z.string().min(1).optional(),
+
+  /* Transport B — Resend. Used only when SMTP is not configured. */
+  RESEND_API_KEY: z.string().min(1).optional(),
 
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
 });
@@ -90,8 +120,24 @@ export function env(): ServerEnv {
   return cached;
 }
 
+export type EmailTransport = 'smtp' | 'resend';
+
+/**
+ * Which delivery transport is configured, if any.
+ *
+ * SMTP wins when both are present: it is the one that can reach arbitrary
+ * recipients, so a deployment carrying leftover Resend credentials still gets
+ * the working path.
+ */
+export function emailTransport(): EmailTransport | null {
+  const e = env();
+  if (!e.EMAIL_FROM) return null;
+  if (e.SMTP_USER && e.SMTP_PASS) return 'smtp';
+  if (e.RESEND_API_KEY) return 'resend';
+  return null;
+}
+
 /** True when email delivery is configured; callers no-op cleanly otherwise. */
 export function isEmailEnabled(): boolean {
-  const e = env();
-  return Boolean(e.RESEND_API_KEY && e.EMAIL_FROM);
+  return emailTransport() !== null;
 }

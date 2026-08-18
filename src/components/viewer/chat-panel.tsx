@@ -280,9 +280,10 @@ export function ChatPanel({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2.5">
-        <Sparkles className="size-4 text-primary" />
-        <h2 className="text-sm font-semibold">Ask this document</h2>
+      <div className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Grounded in this PDF
+        </h2>
         {messages.length > 0 ? (
           <Button
             variant="ghost"
@@ -308,7 +309,7 @@ export function ChatPanel({
               icon={Sparkles}
               title="Ask anything about this PDF"
               description="Answers come only from the document's text, with page citations you can click."
-              className="py-6"
+              className="py-4"
             />
             <div className="space-y-1.5">
               {SUGGESTIONS.map((suggestion) => (

@@ -47,6 +47,24 @@ export function AuthForm({
 }) {
   const router = useRouter();
   const [pending, setPending] = React.useState(false);
+  /**
+   * Whether React has hydrated and `onSubmit` is actually wired up.
+   *
+   * Server-rendered HTML is interactive before hydration completes. A submit in
+   * that window bypasses the React handler entirely and the browser performs a
+   * NATIVE form submission — which, for a GET form, appends every field to the
+   * URL. Observed in testing as:
+   *
+   *   /signup?name=...&email=...&password=layout-password-1
+   *
+   * That puts a plaintext password into browser history, the Referer header,
+   * and any server access log. Blocking submission until hydrated closes the
+   * window; `method="post"` below ensures that even if one slipped through,
+   * credentials travel in a body rather than a URL.
+   */
+  const [hydrated, setHydrated] = React.useState(false);
+
+  React.useEffect(() => setHydrated(true), []);
   const [formError, setFormError] = React.useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>({});
   const [done, setDone] = React.useState<string | null>(null);
@@ -103,7 +121,7 @@ export function AuthForm({
   }
 
   return (
-    <form onSubmit={onSubmit} noValidate className="space-y-4">
+    <form onSubmit={onSubmit} method="post" action="" noValidate className="space-y-4">
       {formError ? (
         <div
           role="alert"
@@ -165,7 +183,7 @@ export function AuthForm({
         );
       })}
 
-      <Button type="submit" className="w-full" loading={pending}>
+      <Button type="submit" className="w-full" loading={pending} disabled={!hydrated}>
         {pending ? pendingLabel : submitLabel}
       </Button>
     </form>

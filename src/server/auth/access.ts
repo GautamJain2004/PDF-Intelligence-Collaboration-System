@@ -28,6 +28,8 @@ export type OwnerAccess = {
   kind: 'owner';
   userId: string;
   userName: string;
+  /** Used as the Reply-To on invitations, so replies reach the sharer. */
+  userEmail: string;
   document: Document;
 };
 
@@ -109,7 +111,13 @@ export async function getDocumentAccess(
 
   const user = await getCurrentUser();
   if (user && doc.ownerId === user.id) {
-    return { kind: 'owner', userId: user.id, userName: user.name, document: doc };
+    return {
+      kind: 'owner',
+      userId: user.id,
+      userName: user.name,
+      userEmail: user.email,
+      document: doc,
+    };
   }
 
   const guest = await resolveGuestAccess(documentId);

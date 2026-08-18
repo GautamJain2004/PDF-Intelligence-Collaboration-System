@@ -157,8 +157,10 @@ export function UploadDropzone({ onUploaded }: { onUploaded: () => void }) {
       onDragLeave={() => setDragging(false)}
       onDrop={onDrop}
       className={cn(
-        'rounded-lg border-2 border-dashed bg-card p-6 transition-colors',
-        dragging ? 'border-primary bg-primary/5' : 'border-border',
+        'rounded-lg border border-dashed bg-card p-5 transition-colors',
+        dragging
+          ? 'border-primary bg-primary/5'
+          : 'border-border hover:border-primary/40',
         busy && 'pointer-events-none opacity-90',
       )}
     >
@@ -206,19 +208,21 @@ export function UploadDropzone({ onUploaded }: { onUploaded: () => void }) {
           </div>
         </div>
       ) : (
-        <div className="flex flex-col items-center gap-3 text-center sm:flex-row sm:text-left">
-          <div className="rounded-full bg-primary/10 p-2.5">
+        <div className="flex flex-col items-center gap-3 text-center">
+          <div className="rounded-full bg-primary/10 p-2.5 ring-1 ring-inset ring-primary/15">
             <Upload className="size-5 text-primary" />
           </div>
 
-          <div className="flex-1 space-y-0.5">
+          <div className="space-y-0.5">
             <p className="text-sm font-medium">Upload a PDF</p>
-            <p className="text-xs text-muted-foreground">
-              Drag and drop, or browse. Up to {formatBytes(MAX_UPLOAD_BYTES)}.
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              Drag and drop, or browse.
+              <br />
+              Up to {formatBytes(MAX_UPLOAD_BYTES)}.
             </p>
           </div>
 
-          <Button onClick={() => inputRef.current?.click()} className="w-full sm:w-auto">
+          <Button onClick={() => inputRef.current?.click()} className="w-full">
             Choose file
           </Button>
         </div>

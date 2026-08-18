@@ -74,21 +74,22 @@ export async function searchByFilename(
 /**
  * Minimum cosine similarity for a semantic hit to count as relevant.
  *
- * Calibrated against the actual model rather than guessed — embedding
- * similarity has a high floor, so unrelated text does not score near zero.
- * Measured with `scripts/calibrate-threshold.ts` against gemini-embedding-001:
+ * Measured against the actual embedding model rather than guessed — similarity
+ * distributions are provider-specific, and a threshold carried over from another
+ * model silently breaks search in one direction or the other. Measured with
+ * `scripts/calibrate-threshold.ts` against text-embedding-3-small at 768 dims:
  *
- *   related   ("employment contract", "notice period", …)  0.562 - 0.690
- *   unrelated ("pizza recipes", "weather forecast", …)      0.457 - 0.509
+ *   related   ("employment contract", "notice period", …)   0.311 - 0.509
+ *   unrelated ("pizza recipes", "weather forecast", …)      -0.021 - 0.205
  *
- * 0.55 sits just above the unrelated ceiling. The bands are only ~0.05 apart,
- * so this is deliberately biased toward precision: a dashboard that surfaces an
- * employment contract for "pizza recipes" destroys trust in the feature, while
- * a marginal miss is still caught by the filename match that is unioned in.
+ * 0.26 sits at the midpoint of a 0.106-wide gap. For reference, Gemini's
+ * gemini-embedding-001 needed 0.55 here and separated the same two sets by only
+ * 0.053 — OpenAI discriminates about twice as cleanly on this data, so the
+ * cutoff can sit centrally instead of being biased toward precision.
  *
- * Re-run the calibration script if the embedding model changes.
+ * Re-run the calibration script whenever the embedding model changes.
  */
-const SEMANTIC_THRESHOLD = 0.55;
+const SEMANTIC_THRESHOLD = 0.26;
 
 type SemanticRow = {
   id: string;

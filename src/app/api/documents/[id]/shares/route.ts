@@ -36,7 +36,7 @@ export async function POST(
 ) {
   try {
     const { id } = await params;
-    const { document, userName } = await requireDocumentOwner(id);
+    const { document, userName, userEmail } = await requireDocumentOwner(id);
 
     const { email, role, expiresInDays } = await parseJson(request, createShareSchema);
 
@@ -60,7 +60,9 @@ export async function POST(
         summary: document.summary,
       });
 
-      const result = await sendEmail({ to: email, ...mail });
+      // Sent from the deployment's mailbox on this owner's behalf, so replies
+      // are routed back to them rather than to whoever runs the deployment.
+      const result = await sendEmail({ to: email, replyTo: userEmail, ...mail });
       emailDelivered = result.sent;
       // Surfaced to the owner so a delivery problem is explained, not just
       // reported. Only ever shown to the document's owner.

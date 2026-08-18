@@ -119,8 +119,12 @@ template.
 | `GEMINI_FAST_MODEL` | — | Default `gemini-2.5-flash-lite` |
 | `GEMINI_EMBEDDING_MODEL` | — | Default `gemini-embedding-001` |
 | `APP_URL` | ✅ | Absolute origin for share and reset links |
-| `RESEND_API_KEY` | — | Enables share-notification email |
-| `EMAIL_FROM` | — | Sender identity |
+| `SMTP_USER` | — | SMTP login. Set with `SMTP_PASS` to enable email (recommended) |
+| `SMTP_PASS` | — | SMTP password. For Gmail, a 16-char **App Password** |
+| `SMTP_HOST` | — | Default `smtp.gmail.com` |
+| `SMTP_PORT` | — | Default `465` (implicit TLS; use `587` for STARTTLS) |
+| `RESEND_API_KEY` | — | Alternative transport, used only if SMTP is unset |
+| `EMAIL_FROM` | — | Sender identity. Required by both transports |
 | `TEST_DATABASE_URL` | — | Enables DB integration tests |
 
 Validation is centralised in [`src/lib/env.ts`](./src/lib/env.ts) with Zod, and
@@ -612,25 +616,62 @@ Stated plainly, as the brief invites.
    defence against a distributed attacker. Swapping in Upstash Redis is a
    drop-in change to one module.
 
-4. **Email needs a verified domain.** With `onboarding@resend.dev` and no
-   verified domain, Resend delivers **only to the address that owns the Resend
-   account** — every other recipient is rejected with a 403, and reserved
-   domains like `example.com` with a 422. This is a provider sandbox rule, not
-   an app bug.
+4. **Email requires a sender identity a provider will trust.** Two transports
+   are supported, selected by configuration in
+   [`src/lib/env.ts`](./src/lib/env.ts): SMTP wins when `SMTP_USER` and
+   `SMTP_PASS` are set, otherwise `RESEND_API_KEY` is used.
 
-   Handled rather than hidden: the share link is still created and stays
-   copyable, and the UI explains the specific reason delivery failed instead of
-   a generic "could not send", because that reason is fixable. Password-reset
-   links are additionally printed to the server console in development, so the
-   flow is testable with no email provider at all.
+   **SMTP (recommended)** reaches *any* recipient with no domain purchase. For
+   Gmail, enable 2-Step Verification and generate an
+   [App Password](https://myaccount.google.com/apppasswords) — the account
+   password is rejected. Google displays 16 characters in four groups; enter
+   them without spaces. Free Gmail allows roughly 500 recipients/day.
 
-   To email arbitrary recipients, verify a domain at
-   [resend.com/domains](https://resend.com/domains) and point `EMAIL_FROM` at
-   it. A domain showing `not_started` is not yet verified.
+   **Resend** is only viable with a *verified* sending domain. With
+   `onboarding@resend.dev` and no verified domain it delivers **only to the
+   address that owns the Resend account** — every other recipient is rejected
+   with a 403, and reserved domains like `example.com` with a 422. This is a
+   provider sandbox rule, not an app bug, and it makes real share invitations
+   impossible. Verify a domain at [resend.com/domains](https://resend.com/domains)
+   to lift it; a domain showing `not_started` is not yet verified.
+
+   Verify whichever transport you configure before relying on it:
+
+   ```bash
+   npm run verify:email                      # report config + authenticate only
+   npm run verify:email -- you@example.com   # send a real invite to an inbox
+   ```
+
+   Failure is handled rather than hidden: the share link is still created and
+   stays copyable, and the UI reports the specific reason — sandbox restriction,
+   rejected credentials, unreachable server — instead of a generic "could not
+   send", because each has a different fix. Password-reset links are
+   additionally printed to the server console in development, so the flow is
+   testable with no email provider at all.
 
    Note that `.env.local` is read once at process start and the parsed result is
    cached, so **adding an email key requires a full dev server restart** — a hot
    reload silently keeps the old value, which looks exactly like broken email.
+
+   **Invitations send from one app mailbox, not each user's own address.** Every
+   user shares through the deployment's single configured sender, so a recipient
+   sees `EMAIL_FROM` rather than the sharer. The sharer's name is in the subject
+   and body, and their address is set as `Reply-To`, so replies reach the person
+   who actually shared the document rather than whoever runs the deployment.
+
+   Sending genuinely *as* each user would mean per-user Gmail OAuth, which was
+   considered and rejected. The code is roughly a day, but `gmail.send` is a
+   [sensitive scope](https://developers.google.com/gmail/api/auth/scopes):
+   Google review takes
+   [up to 10 days](https://developers.google.com/identity/protocols/oauth2/production-readiness/sensitive-scope-verification)
+   and requires a verified domain, privacy policy, and demo video. Until it
+   passes, the app is stuck in Testing status — capped at 100 manually
+   allowlisted users, with refresh tokens
+   [revoked every 7 days](https://support.google.com/cloud/answer/15549945?hl=en).
+   That is strictly worse than the current behaviour for anyone evaluating this
+   app, so `Reply-To` carries the correspondent instead. Providers rewrite `From`
+   to the authenticated mailbox anyway, so no header trick avoids the OAuth
+   requirement.
 
 5. **No Content-Security-Policy.** Next.js inlines hydration data, so a correct
    nonce-based CSP means threading a nonce through middleware into every inline

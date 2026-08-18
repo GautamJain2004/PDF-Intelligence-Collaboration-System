@@ -8,21 +8,36 @@ import { EMBEDDING_DIMENSIONS } from '@/server/db/schema';
 /**
  * Embedding generation.
  *
- * Two details here materially affect retrieval quality:
+ * Uses `text-embedding-3-small` with an explicit `dimensions` request.
  *
- * 1. **Asymmetric task types.** Gemini embeds differently depending on whether
- *    text is a stored passage (`RETRIEVAL_DOCUMENT`) or a search query
- *    (`RETRIEVAL_QUERY`). Using the matching type on each side measurably beats
- *    embedding both identically, because a question and the passage answering
- *    it are not the same kind of text.
+ * **Why 768 and not the model's native 1536.** The `document_chunks.embedding`
+ * and `documents.doc_embedding` columns are `vector(768)`, and pgvector's HNSW
+ * index refuses anything above 2000 dimensions. text-embedding-3 models are
+ * trained with Matryoshka representation learning, so a truncated prefix is
+ * still a valid embedding rather than a lossy crop — asking for 768 keeps the
+ * existing schema and indexes untouched, with a small and well-characterised
+ * quality cost versus 1536.
  *
- * 2. **Manual normalisation.** gemini-embedding-001 only returns unit-length
- *    vectors at its native 3072 dimensions. We request 768 (pgvector's HNSW
- *    index refuses anything above 2000), and truncated outputs are NOT
- *    normalised, so cosine distance would be subtly wrong without this step.
+ * **Normalisation matters here.** OpenAI returns unit-length vectors at native
+ * dimensionality, but a truncated output is NOT unit length. Cosine distance
+ * would be subtly wrong without re-normalising, so every vector goes through
+ * `normalize()` before it is stored or compared.
+ *
+ * **No task types.** Gemini distinguishes `RETRIEVAL_DOCUMENT` from
+ * `RETRIEVAL_QUERY`, which measurably helps because a question and the passage
+ * answering it are different kinds of text. OpenAI's embeddings are symmetric
+ * and offer no equivalent, so that advantage is gone. The hybrid retrieval in
+ * `retrieve.ts` compensates: the full-text half catches the exact-term matches
+ * that symmetric dense retrieval is weakest on.
+ *
+ * **Switching embedding providers invalidates stored vectors.** Embeddings from
+ * different models occupy different vector spaces; comparing a Gemini-era chunk
+ * vector against an OpenAI query vector produces meaningless similarity scores
+ * rather than an error. Any document embedded under a previous provider must be
+ * re-ingested. See the README migration note.
  */
 
-/** Gemini's batch ceiling per embed request. */
+/** OpenAI accepts up to 2048 inputs per request; 100 keeps payloads modest. */
 const MAX_BATCH = 100;
 
 /** Scales a vector to unit length so cosine distance behaves as expected. */
@@ -40,22 +55,23 @@ function assertDimensions(vector: number[]): number[] {
   if (vector.length !== EMBEDDING_DIMENSIONS) {
     throw new Error(
       `Embedding dimension mismatch: expected ${EMBEDDING_DIMENSIONS}, got ${vector.length}. ` +
-        'The GEMINI_EMBEDDING_MODEL and the vector column width must agree.',
+        'The embedding model and the vector column width must agree.',
     );
   }
   return vector;
 }
 
-const providerOptions = (taskType: 'RETRIEVAL_DOCUMENT' | 'RETRIEVAL_QUERY') => ({
-  google: { outputDimensionality: EMBEDDING_DIMENSIONS, taskType },
-});
+/** Requests the truncated width the schema expects. */
+const providerOptions = {
+  openai: { dimensions: EMBEDDING_DIMENSIONS },
+};
 
 /** Embeds a user's question for retrieval. */
 export async function embedQuery(text: string): Promise<number[]> {
   const { embedding } = await embed({
     model: embeddingModel(),
     value: text,
-    providerOptions: providerOptions('RETRIEVAL_QUERY'),
+    providerOptions,
   });
   return normalize(assertDimensions(embedding));
 }
@@ -76,7 +92,7 @@ export async function embedDocuments(texts: string[]): Promise<number[][]> {
     const { embeddings } = await embedMany({
       model: embeddingModel(),
       values: batch,
-      providerOptions: providerOptions('RETRIEVAL_DOCUMENT'),
+      providerOptions,
     });
     for (const embedding of embeddings) {
       results.push(normalize(assertDimensions(embedding)));
@@ -100,7 +116,7 @@ export async function embedDocumentDescriptor(
   const { embedding } = await embed({
     model: embeddingModel(),
     value: `${filename}\n\n${summary}`,
-    providerOptions: providerOptions('RETRIEVAL_DOCUMENT'),
+    providerOptions,
   });
   return normalize(assertDimensions(embedding));
 }

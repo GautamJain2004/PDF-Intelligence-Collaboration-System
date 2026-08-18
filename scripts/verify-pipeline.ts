@@ -69,7 +69,7 @@ async function main() {
     for (const c of chunks) console.log(`     #${c.chunkIndex} pp.${c.pageFrom}-${c.pageTo} (${c.tokenCount} tok)`);
 
     // --- 4. Embeddings ----------------------------------------------------
-    step('4. Embeddings (live Gemini)');
+    step('4. Embeddings (live LLM)');
     const t0 = Date.now();
     const embeddings = await embedDocuments(chunks.map((c) => c.content));
     const norm = Math.hypot(...embeddings[0]!);
@@ -78,7 +78,7 @@ async function main() {
     if (Math.abs(norm - 1) > 1e-6) throw new Error('embeddings are not unit-normalised');
 
     // --- 5. Summary -------------------------------------------------------
-    step('5. AI summary (live Gemini)');
+    step('5. AI summary (live LLM)');
     const t1 = Date.now();
     const { summary, strategy } = await summarizeDocument('Agreement_v3.pdf', extraction.pages);
     console.log(`   strategy: ${strategy}, ${Date.now() - t1}ms`);
@@ -147,7 +147,7 @@ async function main() {
     }
 
     // --- 8. Grounded answer ----------------------------------------------
-    step('8. Grounded answer with citations (live Gemini)');
+    step('8. Grounded answer with citations (live LLM)');
     const askQ = 'What is the salary and when is it reviewed?';
     const ctx = await retrieveChunks(doc.id, askQ);
     const { text: answer } = await generateText({

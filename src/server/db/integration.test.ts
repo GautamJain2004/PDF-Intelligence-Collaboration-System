@@ -21,7 +21,7 @@ if (TEST_DB) {
   process.env.AUTH_SECRET ??= 'integration-test-secret-at-least-32-chars';
   process.env.SUPABASE_URL ??= 'http://localhost:54321';
   process.env.SUPABASE_SERVICE_ROLE_KEY ??= 'test-key';
-  process.env.GOOGLE_GENERATIVE_AI_API_KEY ??= 'test-key';
+  process.env.OPENAI_API_KEY ??= 'test-openai-key';
   process.env.APP_URL ??= 'http://localhost:3000';
 }
 
