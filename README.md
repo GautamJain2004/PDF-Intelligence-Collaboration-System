@@ -140,6 +140,12 @@ npm run db:migrate    # apply pending migrations (uses DIRECT_URL)
 npm run db:studio     # browse data
 ```
 
+| Migration | Purpose |
+|-----------|---------|
+| `0000_init` | Tables, indexes, extensions, CHECK constraints |
+| `0001_share_token_encryption` | Adds `token_encrypted` so owners can re-copy share links |
+| `0002_lockdown_postgrest_access` | **Security-critical.** Enables RLS and revokes anon grants — see [The PostgREST hole](#the-postgrest-hole-found-exploited-fixed). Do not skip. |
+
 `0000_init.sql` begins with `CREATE EXTENSION` for `vector` and `pg_trgm`.
 drizzle-kit does not emit extension DDL, so those two lines are a **deliberate
 manual addition** — preserve them if you regenerate.
@@ -501,9 +507,59 @@ client import a **build error** rather than a silent leak.
 semantic search — tuned per endpoint, since the cost and abuse profile of
 logging in differs from streaming an LLM answer.
 
+**PostgREST is locked shut** — see below. This was the single most serious issue
+found while building, and application-layer authorization could not have
+defended against it.
+
 **Dependencies** — `npm audit` reports **0 vulnerabilities**. The scaffolded
 Next.js version shipped with 3 (including the middleware auth-bypass CVE) and
 was patched; `sharp`, `postcss`, and `esbuild` are pinned forward via overrides.
+
+### The PostgREST hole (found, exploited, fixed)
+
+Supabase automatically exposes every table in the `public` schema over PostgREST
+at `https://<ref>.supabase.co/rest/v1/<table>`, authenticated with the project's
+`anon` key — a key that is **designed to be public** and ships in browser
+bundles.
+
+This app never uses PostgREST. It talks to Postgres directly and enforces
+authorization in server code. That turned out to be irrelevant: PostgREST is a
+second door into the same database, and with RLS off and default grants in
+place it ignored every check in the application.
+
+Confirmed by actually running the attack with nothing but the public anon key:
+
+```
+GET    /rest/v1/users     -> 200   email + argon2 password_hash
+GET    /rest/v1/sessions  -> 200   session token_hash
+GET    /rest/v1/documents -> 200   storage_path + summaries
+PATCH  /rest/v1/users     -> 204   writes permitted
+DELETE /rest/v1/users     -> 204   deletes permitted
+```
+
+Every password hash was readable, and the users table was deletable, by anyone
+who knew the project ref.
+
+Fixed in [`drizzle/0002_lockdown_postgrest_access.sql`](./drizzle/0002_lockdown_postgrest_access.sql):
+
+1. **RLS enabled on all 9 tables with no policies** — a default-deny for `anon`
+   and `authenticated`. The app is unaffected because it connects as the table
+   owner, and owners bypass RLS unless `FORCE ROW LEVEL SECURITY` is set.
+2. **Grants revoked** from `anon` and `authenticated` as defence in depth.
+
+Re-running the same requests afterwards returns `401` on every table, for both
+the legacy anon key and the modern publishable key, on reads and writes alike.
+
+**Why no RLS policies?** This app's authorization model — share tokens, guest
+sessions scoped to a single share, per-share roles — is richer than RLS can
+express cleanly. Writing policies would mean two implementations of the same
+rules that must agree forever, and the second one silently becomes wrong. One
+enforcement point in the server, plus a hard deny at the database edge, is the
+honest design. Supabase's linter reports this as INFO ("RLS enabled, no
+policy"), which is the intended state, not an oversight.
+
+Anyone deploying this must run migration `0002`. Without it the database is
+world-readable regardless of how correct the application code is.
 
 **Security headers** — `X-Content-Type-Options: nosniff`, `X-Frame-Options`,
 `Referrer-Policy: strict-origin-when-cross-origin` (so share tokens in URLs
@@ -559,6 +615,27 @@ Stated plainly, as the brief invites.
 10. **Semantic search only covers processed documents.** It matches on the
     summary embedding, so a document that failed ingest is findable by filename
     only.
+
+11. **Semantic relevance threshold is tuned, not learned.** Embedding similarity
+    has a high floor, so the 0.55 cutoff was measured (see
+    `scripts/calibrate-threshold.ts`) rather than guessed: related queries score
+    0.562–0.690, unrelated ones 0.457–0.509. The bands are only ~0.05 apart, so
+    it is biased toward precision. Re-run the script if the embedding model
+    changes — a wrong threshold here silently makes search useless in one
+    direction or the other.
+
+12. **Citation granularity follows chunk size.** A chunk spanning several pages
+    is cited as `[pp.2-8]`, which points at a region rather than a line. Dense
+    real-world PDFs produce chunks covering one or two pages, so this is mostly
+    tight; sparse documents give coarser citations. Clicking any citation jumps
+    to the first page of the range.
+
+13. **Two Supabase advisor warnings are knowingly accepted.** `vector` and
+    `pg_trgm` live in the `public` schema (Supabase installs them there by
+    default). Moving them would require schema-qualifying the `vector` type
+    throughout and managing `search_path`. With `anon` and `authenticated`
+    stripped of all privileges, the shadowing risk this warns about is not
+    reachable.
 
 ---
 

@@ -41,3 +41,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Generated test fixtures (regenerate with: npx tsx scripts/make-sample-pdf.ts)
+/sample-data

@@ -71,8 +71,24 @@ export async function searchByFilename(
     .orderBy(desc(documents.createdAt));
 }
 
-/** Minimum cosine similarity for a semantic hit to be considered relevant. */
-const SEMANTIC_THRESHOLD = 0.35;
+/**
+ * Minimum cosine similarity for a semantic hit to count as relevant.
+ *
+ * Calibrated against the actual model rather than guessed — embedding
+ * similarity has a high floor, so unrelated text does not score near zero.
+ * Measured with `scripts/calibrate-threshold.ts` against gemini-embedding-001:
+ *
+ *   related   ("employment contract", "notice period", …)  0.562 - 0.690
+ *   unrelated ("pizza recipes", "weather forecast", …)      0.457 - 0.509
+ *
+ * 0.55 sits just above the unrelated ceiling. The bands are only ~0.05 apart,
+ * so this is deliberately biased toward precision: a dashboard that surfaces an
+ * employment contract for "pizza recipes" destroys trust in the feature, while
+ * a marginal miss is still caught by the filename match that is unioned in.
+ *
+ * Re-run the calibration script if the embedding model changes.
+ */
+const SEMANTIC_THRESHOLD = 0.55;
 
 type SemanticRow = {
   id: string;

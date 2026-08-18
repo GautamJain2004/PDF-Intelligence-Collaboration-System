@@ -15,6 +15,13 @@
       "when": 1787060053606,
       "tag": "0001_share_token_encryption",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1787064985026,
+      "tag": "0002_lockdown_postgrest_access",
+      "breakpoints": true
     }
   ]
 }

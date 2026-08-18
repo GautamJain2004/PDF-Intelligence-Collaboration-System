@@ -45,15 +45,22 @@ function AssistantText({
   const blocks = content.split(/\n{2,}/);
 
   const renderInline = (text: string, keyPrefix: string) => {
-    // Split on citations, bold, and inline code, keeping the delimiters.
-    const parts = text.split(/(\[p\.\d+(?:-\d+)?\]|\*\*[^*]+\*\*|`[^`]+`)/g);
+    /*
+     * Matches both citation shapes the model produces: `[p.4]` for a chunk on a
+     * single page, and `[pp.2-8]` for one spanning a range — the context is
+     * labelled with the range, so the model mirrors it. Both are clickable and
+     * jump to the first page of the range.
+     */
+    const parts = text.split(/(\[pp?\.\s*\d+\s*(?:[-–]\s*\d+)?\]|\*\*[^*]+\*\*|`[^`]+`)/g);
 
     return parts.map((part, i) => {
       const key = `${keyPrefix}-${i}`;
 
-      const citation = part.match(/^\[p\.(\d+)(?:-\d+)?\]$/);
+      const citation = part.match(/^\[pp?\.\s*(\d+)\s*(?:[-–]\s*(\d+))?\]$/);
       if (citation) {
         const page = Number(citation[1]);
+        const end = citation[2] ? Number(citation[2]) : null;
+        const label = end && end !== page ? `pp.${page}-${end}` : `p.${page}`;
         return (
           <button
             key={key}
@@ -61,7 +68,7 @@ function AssistantText({
             className="mx-0.5 inline-flex items-center rounded bg-primary/10 px-1.5 py-0.5 align-baseline text-[11px] font-medium text-primary ring-1 ring-inset ring-primary/20 transition-colors hover:bg-primary/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             title={`Jump to page ${page}`}
           >
-            p.{page}
+            {label}
           </button>
         );
       }

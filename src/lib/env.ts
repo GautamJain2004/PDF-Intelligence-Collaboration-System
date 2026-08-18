@@ -38,8 +38,14 @@ const serverEnvSchema = z.object({
 
   // --- AI -------------------------------------------------------------------
   GOOGLE_GENERATIVE_AI_API_KEY: z.string().min(1, 'Gemini API key is required'),
-  GEMINI_CHAT_MODEL: z.string().min(1).default('gemini-2.5-flash'),
-  GEMINI_FAST_MODEL: z.string().min(1).default('gemini-2.5-flash-lite'),
+  /*
+   * Defaults verified against a live key. Note that Google's model *listing*
+   * endpoint is not a reliable guide to availability: `gemini-2.5-flash-lite`
+   * is still listed but returns 404 ("no longer available to new users") on
+   * generateContent. The 3.5 family is current and confirmed working.
+   */
+  GEMINI_CHAT_MODEL: z.string().min(1).default('gemini-3.5-flash'),
+  GEMINI_FAST_MODEL: z.string().min(1).default('gemini-3.5-flash-lite'),
   GEMINI_EMBEDDING_MODEL: z.string().min(1).default('gemini-embedding-001'),
 
   // --- App ------------------------------------------------------------------
