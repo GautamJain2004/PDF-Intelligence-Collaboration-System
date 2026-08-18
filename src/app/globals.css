@@ -141,11 +141,11 @@
 }
 
 /**
- * react-pdf layers.
+ * react-pdf layout.
  *
- * The text layer must sit invisibly on top of the canvas for selection and
- * in-document search to work; without these rules it renders as duplicated
- * visible text over the page.
+ * The text- and annotation-layer positioning rules come from react-pdf's own
+ * stylesheets, imported in `components/viewer/pdf-viewer.tsx`. Only layout and
+ * theming that the library does not provide belongs here.
  */
 .react-pdf__Page {
   @apply mx-auto;
@@ -155,30 +155,9 @@
   @apply mx-auto max-w-full;
 }
 
-.react-pdf__Page__textContent {
-  position: absolute;
-  top: 0;
-  left: 0;
-  transform-origin: 0 0;
-  line-height: 1;
-}
-
-.react-pdf__Page__textContent span {
-  color: transparent;
-  position: absolute;
-  white-space: pre;
-  transform-origin: 0% 0%;
-  cursor: text;
-}
-
+/* Selection highlight tinted to the app's accent rather than pdf.js's default. */
 .react-pdf__Page__textContent span::selection {
   background: hsl(var(--primary) / 0.35);
-}
-
-.react-pdf__Page__annotations.annotationLayer {
-  position: absolute;
-  top: 0;
-  left: 0;
 }
 
 /* Rich-text comment rendering: only the tags we allow are styled. */

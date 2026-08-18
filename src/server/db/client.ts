@@ -37,9 +37,31 @@ function connect(): DrizzleClient {
     globalForDb.__pdfiqSql ??
     postgres(config.DATABASE_URL, {
       max: 1,
-      idle_timeout: 20,
       connect_timeout: 15,
+      /*
+       * `prepare: false` is required by Supabase's transaction pooler
+       * (pgBouncer, port 6543), which does not support prepared statements.
+       */
       prepare: false,
+      /*
+       * Connection recycling.
+       *
+       * The pooler closes connections it considers idle, and a cached client
+       * holding a dead socket surfaces as `read ECONNRESET` on the next query —
+       * observed in practice against Supabase. Closing our own idle connections
+       * first (and capping total lifetime) means we reconnect on our terms
+       * rather than discovering the socket is gone mid-request.
+       */
+      idle_timeout: 10,
+      max_lifetime: 60 * 10,
+      /* Postgres NOTICE messages are noise in application logs. */
+      onnotice: () => {},
+      /*
+       * Present so a pooler-initiated socket close is an observed event rather
+       * than an unhandled one. postgres.js reconnects on the next query, so
+       * there is nothing to repair here.
+       */
+      onclose: () => {},
     });
 
   const instance = drizzle(client, { schema });

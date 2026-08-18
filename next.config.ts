@@ -52,6 +52,36 @@ const nextConfig: NextConfig = {
   async headers() {
     return [{ source: '/:path*', headers: securityHeaders }];
   },
+
+  /**
+   * pdf.js interop.
+   *
+   * pdfjs-dist ships `.mjs` bundles but its package.json has no
+   * `"type": "module"`. Webpack therefore treats those files as strict ESM,
+   * and the resulting namespace-object handling fails at runtime with
+   * "Object.defineProperty called on non-object" the moment the viewer loads.
+   *
+   * `javascript/auto` restores the permissive CJS/ESM interop, and
+   * `fullySpecified: false` allows pdf.js's extensionless internal imports.
+   *
+   * `canvas: false` stops webpack trying to resolve pdf.js's optional Node
+   * canvas dependency, which does not exist (and is not needed) in a browser.
+   */
+  webpack: (config) => {
+    config.module.rules.push({
+      test: /\.mjs$/,
+      include: /node_modules/,
+      type: 'javascript/auto',
+      resolve: { fullySpecified: false },
+    });
+
+    config.resolve.alias = {
+      ...config.resolve.alias,
+      canvas: false,
+    };
+
+    return config;
+  },
 };
 
 export default nextConfig;

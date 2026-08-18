@@ -44,3 +44,6 @@ next-env.d.ts
 
 # Generated test fixtures (regenerate with: npx tsx scripts/make-sample-pdf.ts)
 /sample-data
+
+# Copied from node_modules by scripts/copy-pdf-worker.mjs (predev/prebuild)
+/public/pdf.worker.min.mjs

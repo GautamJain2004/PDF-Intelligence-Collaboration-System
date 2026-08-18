@@ -2,6 +2,17 @@
 
 import * as React from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
+
+/*
+ * react-pdf's own layer stylesheets.
+ *
+ * The text layer must sit invisibly over the canvas for selection and in-page
+ * search to work. react-pdf detects whether these are loaded and warns on every
+ * page render if they are not, so use the official files rather than
+ * reimplementing them — hand-rolled equivalents drift from the library's markup.
+ */
+import 'react-pdf/dist/Page/TextLayer.css';
+import 'react-pdf/dist/Page/AnnotationLayer.css';
 import {
   ChevronLeft,
   ChevronRight,
@@ -18,15 +29,19 @@ import { cn } from '@/lib/utils';
 /**
  * pdf.js worker.
  *
- * Bundled from the installed package rather than fetched from a CDN: a CDN
- * worker is an external dependency that can break, and it would be blocked by
- * any strict CSP. `import.meta.url` lets the bundler emit it as a local asset,
- * keeping the app self-contained.
+ * Served as a static file from `public/`, copied there from node_modules by
+ * `scripts/copy-pdf-worker.mjs` (wired to the predev/prebuild npm hooks).
+ *
+ * Deliberately not `new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url)`:
+ * that depends on webpack's asset-module handling, which hands back a non-string
+ * here and throws "url.replace is not a function" at runtime. A plain absolute
+ * path removes the bundler from the equation and behaves the same in dev and
+ * production.
+ *
+ * Self-hosted rather than CDN-loaded, so the app has no external runtime
+ * dependency and stays compatible with a strict CSP.
  */
-pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.min.mjs',
-  import.meta.url,
-).toString();
+pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
 
 const MIN_SCALE = 0.5;
 const MAX_SCALE = 2.5;
