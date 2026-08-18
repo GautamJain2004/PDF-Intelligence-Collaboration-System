@@ -39,13 +39,46 @@ export async function POST(request: Request) {
       const url = `${env().APP_URL}/reset-password?token=${encodeURIComponent(token)}`;
       const mail = passwordResetEmail({ name: user.name, url, ttlMinutes: TTL_MINUTES });
 
-      await sendEmail({ to: email, ...mail });
+      const result = await sendEmail({ to: email, ...mail });
 
-      // Development aid: without a Resend key there is no other way to complete
-      // the flow locally. Never logged in production.
-      if (env().NODE_ENV !== 'production') {
-        console.info(`[auth] password reset link for ${email}: ${url}`);
+      /*
+       * Operator visibility.
+       *
+       * The response to the client is deliberately identical whether or not the
+       * account exists, so a delivery failure is invisible from the outside.
+       * Without a server-side signal an operator has no way to tell "no such
+       * account" from "the email provider rejected it", so failures are logged
+       * loudly here.
+       */
+      if (!result.sent) {
+        console.error(
+          `[auth] password reset email NOT delivered to ${email} (${result.reason}): ${result.message}`,
+        );
       }
+
+      /*
+       * Development escape hatch.
+       *
+       * Printed to the server console only — never returned in the response.
+       * Putting a reset link in the HTTP body would turn this endpoint into an
+       * account-takeover primitive for anyone who could reach it, which is far
+       * too dangerous to gate on NODE_ENV alone.
+       */
+      if (env().NODE_ENV !== 'production') {
+        const banner = '='.repeat(78);
+        console.info(
+          `\n${banner}\n` +
+            `PASSWORD RESET LINK (development only)\n` +
+            `  account : ${email}\n` +
+            `  expires : ${TTL_MINUTES} minutes, single use\n` +
+            `  email   : ${result.sent ? 'delivered' : `not delivered (${result.reason})`}\n` +
+            `\n  ${url}\n` +
+            `${banner}\n`,
+        );
+      }
+    } else if (env().NODE_ENV !== 'production') {
+      // Also worth knowing locally: the address simply has no account.
+      console.info(`[auth] password reset requested for unknown address: ${email}`);
     }
 
     // Always the same response, whether or not the account exists — otherwise

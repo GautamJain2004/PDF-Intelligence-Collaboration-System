@@ -49,6 +49,7 @@ export async function POST(
     });
 
     let emailDelivered: boolean | null = null;
+    let emailMessage: string | null = null;
 
     if (email) {
       const mail = shareInviteEmail({
@@ -61,11 +62,19 @@ export async function POST(
 
       const result = await sendEmail({ to: email, ...mail });
       emailDelivered = result.sent;
+      // Surfaced to the owner so a delivery problem is explained, not just
+      // reported. Only ever shown to the document's owner.
+      emailMessage = result.sent ? null : result.message;
     }
 
-    return json({ share: { id: share.id, url: share.url, role }, emailDelivered }, {
-      status: 201,
-    });
+    return json(
+      {
+        share: { id: share.id, url: share.url, role },
+        emailDelivered,
+        emailMessage,
+      },
+      { status: 201 },
+    );
   } catch (error) {
     return handleApiError(error);
   }

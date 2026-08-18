@@ -176,6 +176,30 @@ npm run typecheck   # tsc --noEmit
 npm run lint
 ```
 
+### Testing password reset locally
+
+No email provider is needed. Request a reset, then read the link from the dev
+server console:
+
+```
+==============================================================================
+PASSWORD RESET LINK (development only)
+  account : you@example.com
+  expires : 30 minutes, single use
+  email   : not delivered (not-configured)
+
+  http://localhost:3000/reset-password?token=...
+==============================================================================
+```
+
+The link is never included in the HTTP response, in any environment — doing so
+would turn the endpoint into an account-takeover primitive for anyone who could
+reach it. Terminal access is the deliberate gate.
+
+Verified behaviour: the token is single-use (replay returns 400), expires after
+30 minutes, and completing a reset **revokes every existing session** for that
+account — an old cookie returns 401 immediately afterwards.
+
 ### Running without Supabase
 
 The database layer works against any Postgres with `pgvector`:
@@ -588,9 +612,25 @@ Stated plainly, as the brief invites.
    defence against a distributed attacker. Swapping in Upstash Redis is a
    drop-in change to one module.
 
-4. **Email needs a verified domain.** Without one, Resend delivers only to the
-   account owner's address. Sharing is unaffected — links are always shown for
-   copying, and the UI says honestly when a message could not be sent.
+4. **Email needs a verified domain.** With `onboarding@resend.dev` and no
+   verified domain, Resend delivers **only to the address that owns the Resend
+   account** — every other recipient is rejected with a 403, and reserved
+   domains like `example.com` with a 422. This is a provider sandbox rule, not
+   an app bug.
+
+   Handled rather than hidden: the share link is still created and stays
+   copyable, and the UI explains the specific reason delivery failed instead of
+   a generic "could not send", because that reason is fixable. Password-reset
+   links are additionally printed to the server console in development, so the
+   flow is testable with no email provider at all.
+
+   To email arbitrary recipients, verify a domain at
+   [resend.com/domains](https://resend.com/domains) and point `EMAIL_FROM` at
+   it. A domain showing `not_started` is not yet verified.
+
+   Note that `.env.local` is read once at process start and the parsed result is
+   cached, so **adding an email key requires a full dev server restart** — a hot
+   reload silently keeps the old value, which looks exactly like broken email.
 
 5. **No Content-Security-Policy.** Next.js inlines hydration data, so a correct
    nonce-based CSP means threading a nonce through middleware into every inline

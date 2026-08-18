@@ -9,12 +9,14 @@ import { env, isEmailEnabled } from '@/lib/env';
  *
  * Email is a notification layer, never a correctness dependency: sharing and
  * password reset both work when delivery is unconfigured or fails. Failures are
- * logged and swallowed so a Resend outage cannot break a share operation that
- * has already succeeded in the database.
+ * caught and reported rather than thrown, so a provider outage cannot break a
+ * share operation that has already succeeded in the database.
  *
- * Known limitation: on a Resend account without a verified sending domain,
- * delivery is restricted to the account owner's own address. Share links are
- * always shown in the UI for copying, so this degrades gracefully.
+ * Delivery failures carry a human-readable explanation back to the caller. The
+ * common one is Resend's sandbox restriction — without a verified sending
+ * domain it refuses every recipient except the account owner's own address —
+ * and a generic "could not send" leaves the user with no idea why or how to fix
+ * it.
  */
 
 let client: Resend | null = null;
@@ -25,9 +27,56 @@ function getClient(): Resend | null {
   return client;
 }
 
+export type SendFailureReason = 'not-configured' | 'sandbox-restricted' | 'failed';
+
 export type SendResult =
   | { sent: true }
-  | { sent: false; reason: 'not-configured' | 'failed' };
+  | {
+      sent: false;
+      reason: SendFailureReason;
+      /** Safe to show a signed-in owner; explains the failure and the fix. */
+      message: string;
+    };
+
+/**
+ * Turns a provider error into something actionable.
+ *
+ * Resend returns 403 with a message naming the account owner's address when no
+ * domain is verified. That is a configuration state, not a transient fault, so
+ * it gets its own reason and its own guidance.
+ */
+function interpretError(error: { name?: string; message?: string } | Error): {
+  reason: SendFailureReason;
+  message: string;
+} {
+  const raw = 'message' in error && error.message ? error.message : '';
+
+  if (/only send testing emails to your own/i.test(raw) || /verify a domain/i.test(raw)) {
+    return {
+      reason: 'sandbox-restricted',
+      message:
+        'Your email provider is in sandbox mode and will only deliver to the ' +
+        'account owner’s own address. Verify a sending domain to email anyone else. ' +
+        'The share link below still works — send it manually in the meantime.',
+    };
+  }
+
+  if (/invalid `?to`?/i.test(raw)) {
+    return {
+      reason: 'failed',
+      message:
+        'That recipient address was rejected by the email provider. The share ' +
+        'link below still works — send it manually.',
+    };
+  }
+
+  return {
+    reason: 'failed',
+    message:
+      'The notification email could not be sent. The share link below still ' +
+      'works — send it manually.',
+  };
+}
 
 export async function sendEmail(params: {
   to: string;
@@ -39,9 +88,16 @@ export async function sendEmail(params: {
 
   if (!resend) {
     console.info(
-      `[email] skipped "${params.subject}" -> ${params.to} (RESEND_API_KEY/EMAIL_FROM not set)`,
+      `[email] skipped "${params.subject}" -> ${params.to} ` +
+        '(RESEND_API_KEY / EMAIL_FROM not set)',
     );
-    return { sent: false, reason: 'not-configured' };
+    return {
+      sent: false,
+      reason: 'not-configured',
+      message:
+        'Email delivery is not configured on this deployment. The share link ' +
+        'below still works — send it manually.',
+    };
   }
 
   try {
@@ -54,12 +110,18 @@ export async function sendEmail(params: {
     });
 
     if (error) {
-      console.error('[email] delivery failed:', error);
-      return { sent: false, reason: 'failed' };
+      const interpreted = interpretError(error);
+      console.error(
+        `[email] delivery failed (${interpreted.reason}) -> ${params.to}:`,
+        error.message ?? error,
+      );
+      return { sent: false, ...interpreted };
     }
+
     return { sent: true };
   } catch (error) {
-    console.error('[email] threw:', error);
-    return { sent: false, reason: 'failed' };
+    const interpreted = interpretError(error as Error);
+    console.error(`[email] threw -> ${params.to}:`, error);
+    return { sent: false, ...interpreted };
   }
 }

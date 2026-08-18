@@ -85,6 +85,8 @@ export function ShareDialog({
   const [role, setRole] = React.useState<'viewer' | 'commenter'>('commenter');
   const [creating, setCreating] = React.useState(false);
   const [justCreated, setJustCreated] = React.useState<string | null>(null);
+  /** Explanation shown inline when a notification email could not be delivered. */
+  const [emailNotice, setEmailNotice] = React.useState<string | null>(null);
 
   const { data, isLoading, mutate } = useSWR<{ shares: Share[] }>(
     open ? `/api/documents/${documentId}/shares` : null,
@@ -101,6 +103,7 @@ export function ShareDialog({
       const result = await apiFetch<{
         share: { url: string };
         emailDelivered: boolean | null;
+        emailMessage: string | null;
       }>(`/api/documents/${documentId}/shares`, {
         method: 'POST',
         json: {
@@ -110,15 +113,18 @@ export function ShareDialog({
       });
 
       setJustCreated(result.share.url);
+      setEmailNotice(result.emailMessage ?? null);
       await mutate();
 
       if (withEmail && email.trim()) {
         if (result.emailDelivered) {
           toast.success(`Invitation sent to ${email.trim()}`);
         } else {
-          // Honest about the limitation rather than pretending it sent.
-          toast.warning('Link created, but the email could not be sent', {
-            description: 'Copy the link below and send it yourself.',
+          // Honest about what happened, and specific about why — the reason
+          // comes from the provider and is usually fixable.
+          toast.warning('Link created, but the email was not delivered', {
+            description: result.emailMessage ?? 'Copy the link below and send it yourself.',
+            duration: 10_000,
           });
         }
         setEmail('');
@@ -234,10 +240,29 @@ export function ShareDialog({
         </Button>
 
         {justCreated ? (
-          <div className="space-y-1.5 rounded-md border border-success/25 bg-success/10 p-3">
-            <p className="text-xs font-medium">New link ready</p>
+          <div
+            className={cn(
+              'space-y-1.5 rounded-md border p-3',
+              emailNotice
+                ? 'border-warning/30 bg-warning/10'
+                : 'border-success/25 bg-success/10',
+            )}
+          >
+            <p className="text-xs font-medium">
+              {emailNotice ? 'Link ready — email not delivered' : 'New link ready'}
+            </p>
+            {emailNotice ? (
+              <p className="text-[11px] leading-relaxed text-muted-foreground">
+                {emailNotice}
+              </p>
+            ) : null}
             <div className="flex gap-2">
-              <Input readOnly value={justCreated} className="font-mono text-xs" onFocus={(e) => e.target.select()} />
+              <Input
+                readOnly
+                value={justCreated}
+                className="font-mono text-xs"
+                onFocus={(e) => e.target.select()}
+              />
               <CopyButton value={justCreated} />
             </div>
           </div>
