@@ -16,7 +16,9 @@
     "db:studio": "drizzle-kit studio",
     "predev": "node scripts/copy-pdf-worker.mjs",
     "prebuild": "node scripts/copy-pdf-worker.mjs",
-    "smoke": "node scripts/smoke-viewer.mjs"
+    "smoke": "node scripts/smoke-viewer.mjs",
+    "smoke:sharing": "node scripts/smoke-sharing.mjs",
+    "smoke:all": "node scripts/smoke-viewer.mjs && node scripts/smoke-sharing.mjs"
   },
   "dependencies": {
     "@ai-sdk/google": "^4.0.44",

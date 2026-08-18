@@ -48,7 +48,11 @@ type DocumentResponse = {
   };
 };
 
-type MobileTab = 'document' | 'chat' | 'comments';
+/** Below `lg`, exactly one of the PDF or the side panels is on screen. */
+type MobilePane = 'document' | 'panels';
+
+/** Below `xl`, the side panel area shows one of these at a time. */
+type SidePanel = 'chat' | 'comments';
 
 /**
  * The document workspace: PDF, summary, chat, and comments.
@@ -58,6 +62,12 @@ type MobileTab = 'document' | 'chat' | 'comments';
  *  - Tablet (lg):   PDF beside a single sidebar, tabbed between chat/comments.
  *  - Mobile:        one pane at a time via a bottom tab bar, since three panes
  *                   in a phone viewport are unusable.
+ *
+ * Critically, the chat and comment panels are each rendered EXACTLY ONCE and
+ * shown or hidden with CSS. An earlier version placed them in three separate
+ * breakpoint-specific containers, which mounted three live copies of each: three
+ * chat transcript fetches per page load, three Tiptap editors, and three hidden
+ * comment boxes that made the visible one ambiguous to click.
  *
  * Shared by the owner route and the guest share route; `isOwner` only controls
  * the share button and the back link.
@@ -83,8 +93,8 @@ export function DocumentWorkspace({
 }) {
   const viewerRef = React.useRef<PdfViewerHandle>(null);
   const [currentPage, setCurrentPage] = React.useState(1);
-  const [mobileTab, setMobileTab] = React.useState<MobileTab>('document');
-  const [sidebarTab, setSidebarTab] = React.useState<'chat' | 'comments'>('chat');
+  const [mobilePane, setMobilePane] = React.useState<MobilePane>('document');
+  const [sidePanel, setSidePanel] = React.useState<SidePanel>('chat');
   const [shareOpen, setShareOpen] = React.useState(false);
 
   // Poll only while the document is still being processed.
@@ -118,9 +128,8 @@ export function DocumentWorkspace({
 
   const jumpToPage = React.useCallback((page: number) => {
     viewerRef.current?.goToPage(page);
-    // On mobile the viewer is hidden behind a tab; switch to it so the jump is
-    // actually visible.
-    setMobileTab('document');
+    // Below `lg` the viewer is behind a tab; switch to it so the jump is visible.
+    setMobilePane('document');
   }, []);
 
   const fileUrl = `/api/documents/${documentId}/file`;
@@ -207,11 +216,11 @@ export function DocumentWorkspace({
 
       {/* Body */}
       <div className="flex min-h-0 flex-1">
-        {/* PDF pane */}
+        {/* PDF pane — always present from `lg` up, tab-switched below that. */}
         <div
           className={cn(
             'min-w-0 flex-1',
-            mobileTab === 'document' ? 'block' : 'hidden lg:block',
+            mobilePane === 'document' ? 'block' : 'hidden lg:block',
           )}
         >
           <PdfViewer
@@ -222,54 +231,69 @@ export function DocumentWorkspace({
           />
         </div>
 
-        {/* Desktop sidebar: chat over comments */}
-        <aside className="hidden w-[380px] shrink-0 flex-col border-l border-border xl:flex">
-          <div className="flex min-h-0 flex-1 flex-col border-b border-border">{chat}</div>
-          <div className="flex h-[45%] min-h-0 flex-col">{comments}</div>
-        </aside>
-
-        {/* Tablet sidebar: tabbed */}
-        <aside className="hidden w-[340px] shrink-0 flex-col border-l border-border lg:flex xl:hidden">
+        {/*
+          Side panel area. Full-width below `lg`, a fixed column above it.
+          Holds the single chat and comments instances.
+        */}
+        <aside
+          className={cn(
+            'min-h-0 flex-col border-border',
+            'lg:flex lg:w-[340px] lg:flex-none lg:border-l xl:w-[380px]',
+            mobilePane === 'panels' ? 'flex flex-1' : 'hidden',
+          )}
+        >
+          {/* Tabs only where the two panels have to share space (lg..xl). */}
           <div
             role="tablist"
             aria-label="Document panels"
-            className="flex shrink-0 border-b border-border"
+            className="flex shrink-0 border-b border-border xl:hidden"
           >
-            {(['chat', 'comments'] as const).map((tab) => (
+            {(
+              [
+                { id: 'chat', label: 'Ask AI' },
+                { id: 'comments', label: 'Comments' },
+              ] as const
+            ).map(({ id, label }) => (
               <button
-                key={tab}
+                key={id}
                 role="tab"
-                aria-selected={sidebarTab === tab}
-                onClick={() => setSidebarTab(tab)}
+                aria-selected={sidePanel === id}
+                onClick={() => setSidePanel(id)}
                 className={cn(
-                  'flex-1 px-3 py-2 text-xs font-medium capitalize transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
-                  sidebarTab === tab
+                  'flex-1 px-3 py-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
+                  sidePanel === id
                     ? 'border-b-2 border-primary text-foreground'
                     : 'text-muted-foreground hover:text-foreground',
                 )}
               >
-                {tab === 'chat' ? 'Ask AI' : 'Comments'}
+                {label}
               </button>
             ))}
           </div>
-          <div className="min-h-0 flex-1">{sidebarTab === 'chat' ? chat : comments}</div>
-        </aside>
 
-        {/* Mobile panes */}
-        <div className={cn('min-w-0 flex-1 lg:hidden', mobileTab === 'chat' ? 'block' : 'hidden')}>
-          {chat}
-        </div>
-        <div
-          className={cn(
-            'min-w-0 flex-1 lg:hidden',
-            mobileTab === 'comments' ? 'block' : 'hidden',
-          )}
-        >
-          {comments}
-        </div>
+          {/* Chat: stacked above comments at xl, otherwise tab-gated. */}
+          <div
+            className={cn(
+              'min-h-0 flex-col xl:flex xl:flex-1 xl:border-b xl:border-border',
+              sidePanel === 'chat' ? 'flex flex-1' : 'hidden',
+            )}
+          >
+            {chat}
+          </div>
+
+          {/* Comments: fixed share of the column at xl, otherwise tab-gated. */}
+          <div
+            className={cn(
+              'min-h-0 flex-col xl:flex xl:h-[45%] xl:flex-none',
+              sidePanel === 'comments' ? 'flex flex-1' : 'hidden',
+            )}
+          >
+            {comments}
+          </div>
+        </aside>
       </div>
 
-      {/* Mobile tab bar */}
+      {/* Bottom tab bar, below `lg` only. */}
       <nav
         aria-label="Panels"
         className="grid shrink-0 grid-cols-3 border-t border-border bg-background lg:hidden"
@@ -280,20 +304,32 @@ export function DocumentWorkspace({
             { id: 'chat', label: 'Ask AI', icon: Sparkles },
             { id: 'comments', label: 'Comments', icon: MessageSquareText },
           ] as const
-        ).map(({ id, label, icon: Icon }) => (
-          <button
-            key={id}
-            onClick={() => setMobileTab(id)}
-            aria-current={mobileTab === id}
-            className={cn(
-              'flex flex-col items-center gap-0.5 py-2 text-[10px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
-              mobileTab === id ? 'text-primary' : 'text-muted-foreground',
-            )}
-          >
-            <Icon className="size-4" />
-            {label}
-          </button>
-        ))}
+        ).map(({ id, label, icon: Icon }) => {
+          const active =
+            id === 'document' ? mobilePane === 'document' : mobilePane === 'panels' && sidePanel === id;
+
+          return (
+            <button
+              key={id}
+              onClick={() => {
+                if (id === 'document') {
+                  setMobilePane('document');
+                } else {
+                  setMobilePane('panels');
+                  setSidePanel(id);
+                }
+              }}
+              aria-current={active}
+              className={cn(
+                'flex flex-col items-center gap-0.5 py-2 text-[10px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
+                active ? 'text-primary' : 'text-muted-foreground',
+              )}
+            >
+              <Icon className="size-4" />
+              {label}
+            </button>
+          );
+        })}
       </nav>
 
       {isOwner ? (

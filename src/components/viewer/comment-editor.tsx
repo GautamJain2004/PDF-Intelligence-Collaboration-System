@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { useEditor, EditorContent } from '@tiptap/react';
+import { useEditor, useEditorState, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { Bold, Italic, List, ListOrdered } from 'lucide-react';
 
@@ -16,6 +16,13 @@ import { MAX_COMMENT_LENGTH } from '@/lib/validation';
  * for. The extension list is trimmed to match, so the editor cannot produce
  * markup the server-side sanitiser would strip; what the user sees is what gets
  * stored.
+ *
+ * Reactive state comes from `useEditorState`, NOT from reading `editor.isEmpty`
+ * during render. Tiptap v3 no longer re-renders on every transaction
+ * (`shouldRerenderOnTransaction` defaults to false), so a directly-read value is
+ * captured once and never updates — which left the submit button permanently
+ * disabled and made it impossible to post a comment. The same staleness silently
+ * froze the toolbar's active states.
  */
 export function CommentEditor({
   onSubmit,
@@ -61,21 +68,46 @@ export function CommentEditor({
     autofocus: autoFocus,
   });
 
-  const isEmpty = editor?.isEmpty ?? true;
-  const characterCount = editor?.getText().length ?? 0;
-  const overLimit = characterCount > MAX_COMMENT_LENGTH;
+  /**
+   * Everything the UI needs from the editor, in one subscription. Re-renders
+   * only when one of these values actually changes.
+   */
+  const state = useEditorState({
+    editor,
+    selector: ({ editor: instance }) => {
+      if (!instance) return null;
+      return {
+        isEmpty: instance.isEmpty,
+        characterCount: instance.getText().length,
+        isBold: instance.isActive('bold'),
+        isItalic: instance.isActive('italic'),
+        isBulletList: instance.isActive('bulletList'),
+        isOrderedList: instance.isActive('orderedList'),
+      };
+    },
+  });
 
-  async function submit() {
-    if (!editor || isEmpty || submitting || overLimit) return;
+  const isEmpty = state?.isEmpty ?? true;
+  const characterCount = state?.characterCount ?? 0;
+  const overLimit = characterCount > MAX_COMMENT_LENGTH;
+  const canSubmit = !isEmpty && !overLimit && !submitting;
+
+  const submit = React.useCallback(async () => {
+    if (!editor || editor.isEmpty || submitting) return;
+    // Re-read length from the instance so a keyboard submit cannot race a
+    // stale render.
+    if (editor.getText().length > MAX_COMMENT_LENGTH) return;
 
     setSubmitting(true);
     try {
       await onSubmit(editor.getHTML());
       editor.commands.clearContent();
+    } catch {
+      // The caller surfaces the error; keep the draft so nothing is lost.
     } finally {
       setSubmitting(false);
     }
-  }
+  }, [editor, submitting, onSubmit]);
 
   if (!editor) {
     return <div className="h-24 rounded-md border border-input bg-card" />;
@@ -85,25 +117,25 @@ export function CommentEditor({
     {
       icon: Bold,
       label: 'Bold',
-      isActive: editor.isActive('bold'),
+      isActive: state?.isBold ?? false,
       action: () => editor.chain().focus().toggleBold().run(),
     },
     {
       icon: Italic,
       label: 'Italic',
-      isActive: editor.isActive('italic'),
+      isActive: state?.isItalic ?? false,
       action: () => editor.chain().focus().toggleItalic().run(),
     },
     {
       icon: List,
       label: 'Bullet list',
-      isActive: editor.isActive('bulletList'),
+      isActive: state?.isBulletList ?? false,
       action: () => editor.chain().focus().toggleBulletList().run(),
     },
     {
       icon: ListOrdered,
       label: 'Numbered list',
-      isActive: editor.isActive('orderedList'),
+      isActive: state?.isOrderedList ?? false,
       action: () => editor.chain().focus().toggleOrderedList().run(),
     },
   ];
@@ -165,12 +197,7 @@ export function CommentEditor({
             Cancel
           </Button>
         ) : null}
-        <Button
-          size="sm"
-          onClick={submit}
-          disabled={isEmpty || overLimit}
-          loading={submitting}
-        >
+        <Button size="sm" onClick={submit} disabled={!canSubmit} loading={submitting}>
           {submitLabel}
         </Button>
       </div>
