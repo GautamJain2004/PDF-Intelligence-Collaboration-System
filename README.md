@@ -27,7 +27,9 @@ have to create an account.
   - [Prompt design](#prompt-design)
 - [Access control model](#access-control-model)
 - [Security](#security)
+- [Key decisions and rejected alternatives](#key-decisions-and-rejected-alternatives)
 - [Known limitations and trade-offs](#known-limitations-and-trade-offs)
+  - [With more time](#with-more-time--in-priority-order)
 
 ---
 
@@ -71,9 +73,9 @@ have to create an account.
 | Auth | Custom: Argon2id + opaque DB sessions | Revocable server-side; no JWT-in-localStorage |
 | PDF text | `unpdf` | Serverless-native pdf.js; `pdf-parse` breaks on Vercel |
 | PDF viewer | `react-pdf` | Page navigation, so citations can deep-link |
-| LLM | Google Gemini via Vercel AI SDK | Only major provider with a free tier for **both** chat and embeddings |
+| LLM | OpenAI via Vercel AI SDK | Gemini's free tier caps `generate_content` at 20/day/model — a deployed demo 429s within minutes |
 | Editor | Tiptap | Constrained to exactly the allowed formatting |
-| Email | Resend | Free tier; optional |
+| Email | SMTP (Gmail) with Resend fallback | Resend's sandbox sender reaches only the account owner; SMTP reaches any invitee with no domain purchase |
 
 ---
 
@@ -95,7 +97,7 @@ You need three things, all free:
 1. **Supabase project** — [supabase.com](https://supabase.com) → New project.
    Copy the pooler connection strings and the service-role key. Create a
    **private** bucket named `pdfs` (Storage → New bucket → Public **off**).
-2. **Gemini API key** — [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
+2. **OpenAI API key** — [platform.openai.com/api-keys](https://platform.openai.com/api-keys).
 3. **An `AUTH_SECRET`** — `openssl rand -base64 48`.
 
 ---
@@ -114,13 +116,17 @@ template.
 | `SUPABASE_URL` | ✅ | Storage endpoint |
 | `SUPABASE_SERVICE_ROLE_KEY` | ✅ | Server-side storage access |
 | `SUPABASE_STORAGE_BUCKET` | — | Defaults to `pdfs` |
-| `GOOGLE_GENERATIVE_AI_API_KEY` | ✅ | Summaries, chat, embeddings |
-| `GEMINI_CHAT_MODEL` | — | Default `gemini-2.5-flash` |
-| `GEMINI_FAST_MODEL` | — | Default `gemini-2.5-flash-lite` |
-| `GEMINI_EMBEDDING_MODEL` | — | Default `gemini-embedding-001` |
+| `OPENAI_API_KEY` | ✅ | Summaries, chat, embeddings |
+| `OPENAI_CHAT_MODEL` | — | Default `gpt-4.1-mini` |
+| `OPENAI_FAST_MODEL` | — | Default `gpt-4.1-nano` |
+| `OPENAI_EMBEDDING_MODEL` | — | Default `text-embedding-3-small`, requested at 768 dims |
 | `APP_URL` | ✅ | Absolute origin for share and reset links |
-| `RESEND_API_KEY` | — | Enables share-notification email |
-| `EMAIL_FROM` | — | Sender identity |
+| `SMTP_USER` | — | SMTP login. Set with `SMTP_PASS` to enable email (recommended) |
+| `SMTP_PASS` | — | SMTP password. For Gmail, a 16-char **App Password** |
+| `SMTP_HOST` | — | Default `smtp.gmail.com` |
+| `SMTP_PORT` | — | Default `465` (implicit TLS; use `587` for STARTTLS) |
+| `RESEND_API_KEY` | — | Alternative transport, used only if SMTP is unset |
+| `EMAIL_FROM` | — | Sender identity. Required by both transports |
 | `TEST_DATABASE_URL` | — | Enables DB integration tests |
 
 Validation is centralised in [`src/lib/env.ts`](./src/lib/env.ts) with Zod, and
@@ -145,14 +151,15 @@ npm run db:studio     # browse data
 | `0000_init` | Tables, indexes, extensions, CHECK constraints |
 | `0001_share_token_encryption` | Adds `token_encrypted` so owners can re-copy share links |
 | `0002_lockdown_postgrest_access` | **Security-critical.** Enables RLS and revokes anon grants — see [The PostgREST hole](#the-postgrest-hole-found-exploited-fixed). Do not skip. |
+| `0003_guest_identities` | Adds `guest_identities` so a returning visitor keeps one name across links |
 
 `0000_init.sql` begins with `CREATE EXTENSION` for `vector` and `pg_trgm`.
 drizzle-kit does not emit extension DDL, so those two lines are a **deliberate
 manual addition** — preserve them if you regenerate.
 
 **Tables:** `users`, `sessions`, `password_reset_tokens`, `documents`,
-`document_chunks`, `document_shares`, `guest_sessions`, `comments`,
-`chat_messages`.
+`document_chunks`, `document_shares`, `guest_identities`, `guest_sessions`,
+`comments`, `chat_messages`.
 
 Indexes worth noting:
 
@@ -215,7 +222,7 @@ DIRECT_URL=postgresql://postgres:testpass@localhost:55432/pdfiq
 ```
 
 Auth, sharing, comments, and access control all work this way. Upload and the
-AI features still need Supabase Storage and a Gemini key.
+AI features still need Supabase Storage and an OpenAI key.
 
 ---
 
@@ -285,7 +292,7 @@ Browser ──► Next.js (Vercel)
                      │
         ┌────────────┼─────────────────────────┐
         ▼            ▼                         ▼
-  Supabase       Supabase Storage         Google Gemini
+  Supabase       Supabase Storage         OpenAI
   Postgres       (private bucket)         (server-only key)
   + pgvector     signed URLs only         chat / embed / summarise
 ```
@@ -322,11 +329,17 @@ cannot produce duplicates.
 
 ## The AI pipeline
 
-**Model:** Google Gemini. `gemini-2.5-flash` for summaries and answers,
-`gemini-2.5-flash-lite` for the mechanical sub-tasks that sit in the latency
-path, `gemini-embedding-001` for vectors. Chosen because it is the only major
-provider whose free tier covers **both** chat and embeddings, so the whole app
-runs on one no-cost key.
+**Model:** OpenAI. `gpt-4.1-mini` for summaries and grounded answers,
+`gpt-4.1-nano` for the mechanical sub-tasks in the latency path (query
+rewriting, map-step notes), and `text-embedding-3-small` at **768 dimensions**
+for vectors.
+
+Gemini was the original choice for its free tier, and was dropped after
+measuring it: flash models allow only 20 `generate_content` requests *per day*
+per project, which a single ingest plus a short conversation exhausts
+(`RESOURCE_EXHAUSTED … limit: 20`). A reviewer opening the deployed app would
+hit a 429 within minutes. OpenAI costs cents at this scale and removes that
+failure mode. No Google SDK remains in the project.
 
 ### Summaries
 
@@ -391,13 +404,16 @@ the narrative and makes cross-references between excerpts harder to follow.
 
 Two embedding details that materially affect quality:
 
-- **Asymmetric task types.** Passages are embedded with `RETRIEVAL_DOCUMENT`,
-  queries with `RETRIEVAL_QUERY`. A question and the passage answering it are
-  not the same kind of text.
-- **Manual L2 normalisation.** `gemini-embedding-001` only returns unit-length
-  vectors at its native 3072 dims. We request **768** (pgvector's HNSW index
-  rejects >2000) and truncated outputs are *not* normalised — so cosine distance
-  would be subtly wrong without normalising ourselves.
+- **No task types — compensated in retrieval.** Gemini distinguishes
+  `RETRIEVAL_DOCUMENT` from `RETRIEVAL_QUERY`, which helps because a question
+  and the passage answering it are different kinds of text. OpenAI's embeddings
+  are symmetric and offer no equivalent, so that advantage is gone. The hybrid
+  retrieval in `retrieve.ts` covers the gap: its full-text half catches the
+  exact-term matches symmetric dense retrieval is weakest on.
+- **Manual L2 normalisation.** OpenAI returns unit-length vectors only at native
+  dimensionality. We request **768** via Matryoshka truncation (pgvector's HNSW
+  index rejects >2000), and truncated outputs are *not* unit length — so cosine
+  distance would be subtly wrong without normalising ourselves.
 
 ### Chat
 
@@ -472,10 +488,31 @@ requireDocumentAccess(documentId) →
 which document IDs exist.
 
 **Guests need no account.** `/s/<token>` → the server verifies the token hash →
-the visitor supplies a display name → an httpOnly cookie **scoped to that one
+the visitor identifies themselves → an httpOnly cookie **scoped to that one
 share** is issued. It grants access to exactly one document and is not an
-application session. A visitor holding several links keeps a separate identity
-for each.
+application session.
+
+The entry screen offers two routes: continue as a guest, or sign in to an
+existing account (`/login?next=/s/<token>`, with a guard rejecting absolute and
+protocol-relative targets so the parameter cannot become an open redirect).
+
+**Guests are remembered by email.** A guest supplies an email and, optionally, a
+name; `guest_identities` maps that address to the name they chose and reuses it
+on every later link. Comments therefore stay attributed to one person instead of
+a series of strangers, and the comment sidebar tags them `(guest)` so guest and
+account-holder contributions are never confused.
+
+That row is **not a credential**: no password, no verification, and the email is
+resolved only *after* the share token validates. Knowing an address grants
+nothing — access still comes entirely from holding a valid link. For the same
+reason the join form does not look up a name as you type, since that endpoint
+would answer "has this address commented before?" for anyone holding a link.
+
+**Links live one hour.** A share link is a bearer capability, so its lifetime is
+the window in which a leaked link is exploitable (`SHARE_TTL_MINUTES` in
+`src/server/documents/shares.ts`). Creating a new link **revokes every previous
+link for that document**, so regenerating is a real way to cut off something
+already sent — a document has at most one live link.
 
 **Revocation is immediate.** Every access check re-reads `revoked_at` and
 `expires_at`, so revoking a link cuts off guests who already hold a cookie on
@@ -591,9 +628,83 @@ don't leak to third parties), `Permissions-Policy`, HSTS.
 
 ---
 
+## Key decisions and rejected alternatives
+
+The decisions worth defending, each with what was considered instead.
+
+### Opaque database sessions, not JWT
+
+A 256-bit random token in an httpOnly cookie; the server stores a peppered
+SHA-256 of it and looks the session up per request.
+
+**Rejected: JWT.** The deciding factor is **revocation**. A JWT stays valid
+until it expires, because verification is local — there is nothing to
+invalidate. Adding a denylist means a database read per request anyway, leaving
+a stateless token with a stateful check bolted onto it.
+
+This app needs revocation to be immediate and total. Sign-out, password reset,
+and above all **share-link revocation** must cut access off on the very next
+request — that is a headline behaviour here, not an edge case. A row lookup
+makes it a single `UPDATE`.
+
+The cost is honest: one indexed query per authenticated request, sub-millisecond
+at this scale. It buys correctness on the property that actually matters.
+
+**Also rejected: JWT in `localStorage`**, readable by any XSS. The session
+cookie is `httpOnly`, so script cannot exfiltrate it at all.
+
+### Polling, not WebSockets
+
+The dashboard polls every 2.5s **only while a document is still processing**, and
+stops the moment nothing is pending — an idle dashboard makes zero background
+requests.
+
+**Rejected: WebSockets.** They would mean a stateful connection, a reconnection
+strategy, and something to hold the socket open on serverless, in exchange for a
+progress indicator with a known, short lifetime. Ingest takes seconds and happens
+once per upload.
+
+The same reasoning applies to comments: new comments appear on reload rather than
+live. Real-time collaboration would need the same infrastructure for a
+collaboration model this app does not have.
+
+### Chat history: a fixed sliding window, not summarised older turns
+
+The last **5 turns** (10 messages) are replayed, each capped at 6,000 characters.
+
+**Rejected: summarising older turns into a running digest.** It adds an LLM call
+to the latency path on *every* message, and introduces a second place for
+information to be silently lost. At a five-turn window the problem it solves has
+not appeared yet — this is the kind of machinery worth adding when a real
+conversation length demands it, not before.
+
+The per-message cap exists so one enormous pasted message cannot crowd out the
+retrieved excerpts. History is context; the excerpts are the answer source, and
+they must not be starved.
+
+Transcripts are **per actor**: an owner never sees a guest's questions, and two
+guests on the same link do not share one. That is a privacy decision — the
+questions someone asks about a document can be more revealing than the document.
+
+### Text chunked once at ingest, not parsed per request
+
+Extraction, chunking, embedding and summarising all happen once
+(`src/server/documents/ingest.ts`).
+
+**Rejected: re-extracting per question.** `unpdf` on a 33-page PDF costs seconds,
+and chat would inherit that on every turn for text that never changes.
+**Rejected: one large `text` column.** You cannot vector-search a blob; every
+question would send the whole document or chunk it on the fly.
+
+Chunks keep `pageFrom`/`pageTo`, which is what makes citations clickable.
+
+---
+
 ## Known limitations and trade-offs
 
-Stated plainly, as the brief invites.
+Stated plainly, as the brief invites. Each is a **known** limit with a reason,
+not something discovered late — and where there is a clear next step, it is named
+under *"with more time"*.
 
 1. **No OCR — scanned PDFs are rejected, not silently mangled.** A PDF that is
    images with no text layer is detected and the user is told exactly that.
@@ -612,25 +723,62 @@ Stated plainly, as the brief invites.
    defence against a distributed attacker. Swapping in Upstash Redis is a
    drop-in change to one module.
 
-4. **Email needs a verified domain.** With `onboarding@resend.dev` and no
-   verified domain, Resend delivers **only to the address that owns the Resend
-   account** — every other recipient is rejected with a 403, and reserved
-   domains like `example.com` with a 422. This is a provider sandbox rule, not
-   an app bug.
+4. **Email requires a sender identity a provider will trust.** Two transports
+   are supported, selected by configuration in
+   [`src/lib/env.ts`](./src/lib/env.ts): SMTP wins when `SMTP_USER` and
+   `SMTP_PASS` are set, otherwise `RESEND_API_KEY` is used.
 
-   Handled rather than hidden: the share link is still created and stays
-   copyable, and the UI explains the specific reason delivery failed instead of
-   a generic "could not send", because that reason is fixable. Password-reset
-   links are additionally printed to the server console in development, so the
-   flow is testable with no email provider at all.
+   **SMTP (recommended)** reaches *any* recipient with no domain purchase. For
+   Gmail, enable 2-Step Verification and generate an
+   [App Password](https://myaccount.google.com/apppasswords) — the account
+   password is rejected. Google displays 16 characters in four groups; enter
+   them without spaces. Free Gmail allows roughly 500 recipients/day.
 
-   To email arbitrary recipients, verify a domain at
-   [resend.com/domains](https://resend.com/domains) and point `EMAIL_FROM` at
-   it. A domain showing `not_started` is not yet verified.
+   **Resend** is only viable with a *verified* sending domain. With
+   `onboarding@resend.dev` and no verified domain it delivers **only to the
+   address that owns the Resend account** — every other recipient is rejected
+   with a 403, and reserved domains like `example.com` with a 422. This is a
+   provider sandbox rule, not an app bug, and it makes real share invitations
+   impossible. Verify a domain at [resend.com/domains](https://resend.com/domains)
+   to lift it; a domain showing `not_started` is not yet verified.
+
+   Verify whichever transport you configure before relying on it:
+
+   ```bash
+   npm run verify:email                      # report config + authenticate only
+   npm run verify:email -- you@example.com   # send a real invite to an inbox
+   ```
+
+   Failure is handled rather than hidden: the share link is still created and
+   stays copyable, and the UI reports the specific reason — sandbox restriction,
+   rejected credentials, unreachable server — instead of a generic "could not
+   send", because each has a different fix. Password-reset links are
+   additionally printed to the server console in development, so the flow is
+   testable with no email provider at all.
 
    Note that `.env.local` is read once at process start and the parsed result is
    cached, so **adding an email key requires a full dev server restart** — a hot
    reload silently keeps the old value, which looks exactly like broken email.
+
+   **Invitations send from one app mailbox, not each user's own address.** Every
+   user shares through the deployment's single configured sender, so a recipient
+   sees `EMAIL_FROM` rather than the sharer. The sharer's name is in the subject
+   and body, and their address is set as `Reply-To`, so replies reach the person
+   who actually shared the document rather than whoever runs the deployment.
+
+   Sending genuinely *as* each user would mean per-user Gmail OAuth, which was
+   considered and rejected. The code is roughly a day, but `gmail.send` is a
+   [sensitive scope](https://developers.google.com/gmail/api/auth/scopes):
+   Google review takes
+   [up to 10 days](https://developers.google.com/identity/protocols/oauth2/production-readiness/sensitive-scope-verification)
+   and requires a verified domain, privacy policy, and demo video. Until it
+   passes, the app is stuck in Testing status — capped at 100 manually
+   allowlisted users, with refresh tokens
+   [revoked every 7 days](https://support.google.com/cloud/answer/15549945?hl=en).
+   That is strictly worse than the current behaviour for anyone evaluating this
+   app, so `Reply-To` carries the correspondent instead. Providers rewrite `From`
+   to the authenticated mailbox anyway, so no header trick avoids the OAuth
+   requirement.
 
 5. **No Content-Security-Policy.** Next.js inlines hydration data, so a correct
    nonce-based CSP means threading a nonce through middleware into every inline
@@ -678,6 +826,40 @@ Stated plainly, as the brief invites.
     reachable.
 
 ---
+
+### With more time — in priority order
+
+1. **Move ingest to a job queue** (Inngest or QStash) with real progress
+   reporting. This is the single change that lifts the 200-page cap and removes
+   the 60s ceiling from the upload path.
+2. **Redis-backed rate limiting** (Upstash), so the limit is global rather than
+   per instance.
+3. **A nonce-based Content-Security-Policy**, threading a nonce through
+   middleware into Next's inline hydration scripts. `unsafe-inline` would be
+   security theatre, so this was left undone rather than done badly.
+4. **A reranker over the fused candidates.** RRF is a fusion method, not a
+   relevance model; a cross-encoder rerank of the top ~20 would measurably
+   improve which 8 chunks the model actually sees.
+5. **Live comments.** Currently reload-to-see. Worth doing alongside the socket
+   infrastructure, not before.
+6. **OCR for scanned PDFs**, as a queued step where the time budget allows it.
+
+### Later limitations worth naming
+
+- **One live share link per document.** Creating a link revokes the previous one,
+  so "regenerate" genuinely cuts off something already sent. The cost is that a
+  read-only link and a commenter link cannot be live at the same time; per-role
+  links would need a different model.
+- **Guest identity is remembered by email but never verified.** That is
+  deliberate — it is not a credential, and access always comes from holding a
+  valid share token. It does mean two people sharing an inbox share a display
+  name.
+- **Token counting is `chars / 4`, not a tokenizer.** Budgets are conservative
+  enough that a 10–15% error never overflows, but a document with unusual
+  tokenisation (dense tables, non-English text) could drift further.
+- **The semantic-search threshold was calibrated on one document type.** 0.26
+  separates the measured sets cleanly; a very different corpus may need
+  re-running `scripts/calibrate-threshold.ts`.
 
 ## Project layout
 
