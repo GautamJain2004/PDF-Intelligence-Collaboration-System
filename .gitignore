@@ -47,3 +47,6 @@ next-env.d.ts
 
 # Copied from node_modules by scripts/copy-pdf-worker.mjs (predev/prebuild)
 /public/pdf.worker.min.mjs
+
+# Private working notes — not part of the submission
+/ENGINEERING-NOTES.md
