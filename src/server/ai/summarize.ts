@@ -34,9 +34,9 @@ import type { PageText } from '@/server/pdf/extract';
 /**
  * Threshold for the single-pass path.
  *
- * Well inside Gemini's context window, chosen so the model attends evenly
- * across the whole text. Summary quality degrades on very long single prompts
- * well before the hard context limit is reached.
+ * Well inside the chat model's context window, chosen so the model attends
+ * evenly across the whole text. Summary quality degrades on very long single
+ * prompts well before the hard context limit is reached.
  */
 const SINGLE_PASS_TOKEN_LIMIT = 24_000;
 
@@ -54,7 +54,7 @@ export type SummaryResult = {
 };
 
 /** Trims model output down to the requested 3-5 sentences. */
-export function tidySummary(text: string): string {
+function tidySummary(text: string): string {
   const cleaned = text
     .trim()
     // Models occasionally wrap output in quotes or lead with a label.
