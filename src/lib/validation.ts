@@ -32,10 +32,55 @@ export const emailSchema = z
     'Enter a valid email address.',
   );
 
+/**
+ * Character classes a new password must draw from.
+ *
+ * "Special" is defined as anything outside the other three classes rather than
+ * an explicit punctuation list, so accented letters, symbols and non-Latin
+ * scripts all count instead of being silently rejected.
+ */
+const PASSWORD_CLASSES = [
+  { label: 'a lowercase letter', pattern: /[a-z]/ },
+  { label: 'an uppercase letter', pattern: /[A-Z]/ },
+  { label: 'a number', pattern: /[0-9]/ },
+  { label: 'a special character', pattern: /[^a-zA-Z0-9]/ },
+] as const;
+
+/** "a, b and c" — so the error names every missing class in one message. */
+function listMissing(items: string[]): string {
+  if (items.length === 1) return items[0]!;
+  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
+
+/** Shown under the password field so the rules are visible before submitting. */
+export const PASSWORD_HINT =
+  `At least ${MIN_PASSWORD_LENGTH} characters, including upper and lower case, ` +
+  `a number, and a special character.`;
+
+/**
+ * Rules for choosing a NEW password — signup and reset only.
+ *
+ * Deliberately not used by `loginSchema`. Applying it there would lock out
+ * every account created before these rules existed: their stored hash is still
+ * valid, but the plaintext they type would fail validation before it was ever
+ * compared. Complexity is a constraint on what may be *set*, never on what may
+ * be *submitted for verification* — see the note on `loginSchema` below.
+ */
 export const passwordSchema = z
   .string()
   .min(MIN_PASSWORD_LENGTH, `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`)
-  .max(MAX_PASSWORD_LENGTH, `Password must be at most ${MAX_PASSWORD_LENGTH} characters.`);
+  .max(MAX_PASSWORD_LENGTH, `Password must be at most ${MAX_PASSWORD_LENGTH} characters.`)
+  .superRefine((value, ctx) => {
+    const missing = PASSWORD_CLASSES.filter((c) => !c.pattern.test(value)).map(
+      (c) => c.label,
+    );
+    if (missing.length === 0) return;
+
+    ctx.addIssue({
+      code: 'custom',
+      message: `Password must include ${listMissing(missing)}.`,
+    });
+  });
 
 export const nameSchema = z
   .string()
@@ -49,6 +94,18 @@ export const signupSchema = z.object({
   password: passwordSchema,
 });
 
+/**
+ * Sign-in accepts any non-empty password ON PURPOSE.
+ *
+ * Do not "tidy" this to reuse `passwordSchema`. Accounts created before the
+ * complexity rules landed hold perfectly valid hashes of passwords that would
+ * now fail those rules; validating the submitted plaintext would reject them
+ * before it ever reached the hash comparison, locking out every existing user.
+ *
+ * It also leaks nothing: a rejection here would tell an attacker their guess
+ * was malformed rather than merely wrong, which is a distinction the login
+ * response is otherwise careful never to make.
+ */
 export const loginSchema = z.object({
   email: emailSchema,
   password: z.string().min(1, 'Password is required.'),

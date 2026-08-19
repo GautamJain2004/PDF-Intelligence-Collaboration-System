@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { AuthForm } from '@/components/auth/auth-form';
-import { MIN_PASSWORD_LENGTH } from '@/lib/validation';
+import { PASSWORD_HINT } from '@/lib/validation';
 
 export const metadata: Metadata = { title: 'Choose a new password' };
 
@@ -52,7 +52,7 @@ export default async function ResetPasswordPage({
             type: 'password',
             placeholder: '••••••••',
             autoComplete: 'new-password',
-            hint: `At least ${MIN_PASSWORD_LENGTH} characters.`,
+            hint: PASSWORD_HINT,
           },
         ]}
       />
