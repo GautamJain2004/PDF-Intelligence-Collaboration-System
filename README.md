@@ -75,6 +75,7 @@ have to create an account.
 | PDF viewer | `react-pdf` | Page navigation, so citations can deep-link |
 | LLM | OpenAI via Vercel AI SDK | Gemini's free tier caps `generate_content` at 20/day/model — a deployed demo 429s within minutes |
 | Editor | Tiptap | Constrained to exactly the allowed formatting |
+| Comment sanitiser | `sanitize-html` (htmlparser2) | Server-side allowlist with no DOM; DOMPurify needs jsdom, which breaks in serverless — see Key decisions |
 | Email | SMTP (Gmail) with Resend fallback | Resend's sandbox sender reaches only the account owner; SMTP reaches any invitee with no domain purchase |
 
 ---
@@ -233,20 +234,36 @@ npm test                                   # unit tests
 TEST_DATABASE_URL=postgresql://... npm test   # + DB integration tests
 ```
 
-**68 tests.** The DB suite is skipped, not failed, when `TEST_DATABASE_URL` is
-unset.
+**68 unit tests**, plus 23 database integration tests that are **skipped, not
+failed**, when `TEST_DATABASE_URL` is unset — so a reviewer without Postgres
+still gets a green run rather than a wall of red.
 
 | Suite | Covers |
 |-------|--------|
+| `lib/validation.test.ts` | Password complexity per class; that sign-in still accepts legacy weak passwords |
+| `lib/env.test.ts` | Email transport selection across every combination of set/unset variables |
 | `pdf/chunk.test.ts` | Token budgets, page provenance, overlap, no content loss, text cleaning |
 | `comments/sanitize.test.ts` | XSS: scripts, `onerror`, `javascript:` URLs, SVG namespace confusion |
 | `ai/retrieve.test.ts` | RRF ranking, deduplication, vector normalisation |
 | `auth/crypto.test.ts` | Token entropy, hash stability, AES-GCM round-trip, tamper detection |
+| `email/send.test.ts` | Transport dispatch and failure surfacing |
 | `db/integration.test.ts` | Argon2 verification, ownership scoping, share lifecycle, `CHECK` constraints, threading, pgvector cosine + FTS queries, cascade deletes |
 
-The sanitiser tests earned their keep: they caught that DOMPurify's
-`USE_PROFILES` **replaces** `ALLOWED_TAGS` rather than intersecting with it,
-which was silently letting `<img>` and `<a>` through the allowlist.
+Two of these exist because they caught something real.
+
+The sanitiser tests caught that DOMPurify's `USE_PROFILES` **replaces**
+`ALLOWED_TAGS` rather than intersecting with it, which was silently letting
+`<img>` and `<a>` through the allowlist. They then carried over unmodified when
+the sanitiser was replaced (see below) — which is the point of testing behaviour
+rather than implementation.
+
+The `loginSchema` tests guard an availability bug, not a validation one. Password
+complexity applies to signup and reset only; reusing that schema on sign-in would
+reject valid legacy plaintext *before* it reached the hash comparison, locking
+out every account created before the rules existed. The tests assert that
+`'password'` and `'12345678'` are still accepted at login, with the reasoning
+written above them, because the danger is a future reader "tidying" the
+inconsistency away.
 
 ### Verified end-to-end against a running server
 
@@ -279,6 +296,16 @@ Notes:
   webpack does not bundle their native/worker assets.
 - After deploying, set `APP_URL` and redeploy if you first deployed without it —
   otherwise share links point at `localhost`.
+- **Verify the deployment origin against the alias Vercel actually assigns.** If
+  the project name is taken, the production alias gets a suffix
+  (`project-psi.vercel.app`), and an `APP_URL` guessed from the project name
+  points at a host that 404s. Every invite email is built from it.
+- **A green local build does not mean the serverless bundle works.** Next.js
+  externalises some dependencies instead of bundling them, and packages that
+  `require()` an ESM module fail under the serverless loader while working fine
+  under local Node. Typecheck, lint and the full test suite cannot see this
+  class of bug — only a deployed request can. After deploying, hit each API
+  route once and check the status codes rather than assuming.
 
 ---
 
@@ -525,6 +552,31 @@ their very next request.
 **Passwords** — Argon2id (OWASP defaults: 19 MiB, 2 iterations), per-hash salt
 embedded in the PHC string. Plaintext is never stored or logged.
 
+Argon2id is the hybrid variant: its first pass uses Argon2**i**'s
+data-independent memory addressing, the rest uses Argon2**d**'s data-dependent
+addressing. That buys side-channel resistance where the secret is most exposed —
+which matters on shared serverless hardware — without giving up the GPU
+resistance that makes the whole thing worthwhile. The 19 MiB is what defeats
+parallel cracking: an attacker's advantage is thousands of GPU cores, and each
+one now needs its own 19 MiB, which is the resource you cannot cheaply multiply
+on a chip. The low end of OWASP's range is chosen deliberately, not lazily —
+memory on Vercel is per-invocation, and 64 MiB with concurrent logins turns a
+security upgrade into an OOM.
+
+**Password rules** — new passwords need 8–128 characters drawing on all four
+character classes: lower, upper, digit, and one "special", defined as anything
+non-alphanumeric so accented letters and non-Latin scripts count rather than
+being silently refused. The error names every missing class at once instead of
+revealing the rules one rejection at a time.
+
+These apply to **signup and reset only**. `loginSchema` deliberately accepts any
+non-empty password, for two reasons. Accounts predating the rules hold valid
+hashes of passwords that would now fail them, and validating the submitted
+plaintext would reject those users before the hash comparison ever ran — an
+availability bug dressed as a security improvement. It would also tell an
+attacker their guess was *malformed* rather than merely wrong, a distinction the
+login response is otherwise careful never to make. Tests pin this.
+
 **Login** — identical response for unknown email and wrong password. Because an
 unknown email would otherwise skip Argon2 and return measurably faster, the
 unknown path verifies against a **decoy hash**, closing the timing oracle.
@@ -698,6 +750,38 @@ question would send the whole document or chunk it on the fly.
 
 Chunks keep `pageFrom`/`pageTo`, which is what makes citations clickable.
 
+
+### Sanitising comments without a DOM
+
+Comments are the one place one user's input renders inside another user's page,
+so the rich-text HTML must be sanitised **server-side** — a client that skips the
+editor can POST anything.
+
+The obvious choice, `isomorphic-dompurify`, was replaced after it broke in
+production and nowhere else. DOMPurify needs a DOM, which on the server means
+jsdom, which depends on `html-encoding-sniffer@6` — a CommonJS package that
+`require()`s the ESM-only `@exodus/bytes`. Node 22.12+ permits `require(esm)`, so
+it worked locally, passed typecheck, and passed every test. But Next.js
+externalises jsdom rather than bundling it, and the serverless module loader
+rejects that same call: **every comments request returned 500 in production**.
+
+Worse, the sidebar falls back to `canComment: false` when its fetch fails, so a
+hard crash rendered as the calm message *"This share link is read-only."* A
+failure was displaying as a permission state — which is why the panel still needs a
+real error branch.
+
+`sanitize-html` parses with htmlparser2: no DOM, no jsdom, and roughly ten
+megabytes less to cold-start a function whose entire job is stripping tags. The
+guarantees are unchanged — **no attributes survive at all**, which removes event
+handlers, inline styles and `javascript:` URLs in a single rule, and `nonTextTags`
+discards the *contents* of script, style and frame elements while everything else
+disallowed is unwrapped so the user's own words are never deleted. All 14
+sanitiser tests passed unmodified.
+
+The lesson worth stating: this class of bug is invisible to every local check.
+Typecheck, lint and the full suite were green throughout. Only a deployed request
+could find it.
+
 ---
 
 ## Known limitations and trade-offs
@@ -710,20 +794,13 @@ under *"with more time"*.
    images with no text layer is detected and the user is told exactly that.
    Adding Tesseract would blow the serverless time budget. Detecting and
    explaining beats producing a confident summary of nothing.
-
-2. **200-page extraction cap.** Ingest runs inline in a request with a 60s
-   ceiling. Longer documents are processed up to the cap and the user is told
-   how many pages were covered. A job queue (Inngest/QStash) is the production
-   answer; at this scale it is an extra service to deploy and monitor for the
-   same user-visible behaviour.
-
-3. **Rate limiting is per-instance, in-memory.** On a horizontally scaled
+2. **Rate limiting is per-instance, in-memory.** On a horizontally scaled
    deployment the effective limit is (limit × instances). It stops credential
    stuffing from one source and a user hammering the LLM endpoints; it is not a
    defence against a distributed attacker. Swapping in Upstash Redis is a
    drop-in change to one module.
 
-4. **Email requires a sender identity a provider will trust.** Two transports
+3. **Email requires a sender identity a provider will trust.** Two transports
    are supported, selected by configuration in
    [`src/lib/env.ts`](./src/lib/env.ts): SMTP wins when `SMTP_USER` and
    `SMTP_PASS` are set, otherwise `RESEND_API_KEY` is used.
@@ -780,31 +857,14 @@ under *"with more time"*.
    to the authenticated mailbox anyway, so no header trick avoids the OAuth
    requirement.
 
-5. **No Content-Security-Policy.** Next.js inlines hydration data, so a correct
-   nonce-based CSP means threading a nonce through middleware into every inline
-   script. Shipping `unsafe-inline` would be security theatre. The other headers
-   are set; a strict CSP is the clearest next hardening step.
-
-6. **Token estimation is `chars / 4`, not a real tokenizer.** Avoids a
-   tokenizer dependency; budgets are set conservatively enough that a 10–15%
-   error never overflows the context window.
-
-7. **Chat history is per-actor, not shared.** An owner and a guest on the same
-   document have separate conversations. This is a privacy decision, not an
-   oversight — one collaborator's questions can be revealing.
-
-8. **Signup reveals whether an email is registered.** Login and password reset
-   are both enumeration-safe; signup cannot be without making the form unusable.
-   A deliberate, bounded exception.
-
-9. **Comment editing is not implemented.** Delete and re-post covers the need;
+4. **Comment editing is not implemented.** Delete and re-post covers the need;
    edit history done properly (who changed what, when) was not worth the scope.
 
-10. **Semantic search only covers processed documents.** It matches on the
+5. **Semantic search only covers processed documents.** It matches on the
     summary embedding, so a document that failed ingest is findable by filename
     only.
 
-11. **Semantic relevance threshold is tuned, not learned.** Embedding similarity
+6. **Semantic relevance threshold is tuned, not learned.** Embedding similarity
     has a high floor, so the 0.55 cutoff was measured (see
     `scripts/calibrate-threshold.ts`) rather than guessed: related queries score
     0.562–0.690, unrelated ones 0.457–0.509. The bands are only ~0.05 apart, so
@@ -812,54 +872,26 @@ under *"with more time"*.
     changes — a wrong threshold here silently makes search useless in one
     direction or the other.
 
-12. **Citation granularity follows chunk size.** A chunk spanning several pages
+7. **Citation granularity follows chunk size.** A chunk spanning several pages
     is cited as `[pp.2-8]`, which points at a region rather than a line. Dense
     real-world PDFs produce chunks covering one or two pages, so this is mostly
     tight; sparse documents give coarser citations. Clicking any citation jumps
     to the first page of the range.
 
-13. **Two Supabase advisor warnings are knowingly accepted.** `vector` and
-    `pg_trgm` live in the `public` schema (Supabase installs them there by
-    default). Moving them would require schema-qualifying the `vector` type
-    throughout and managing `search_path`. With `anon` and `authenticated`
-    stripped of all privileges, the shadowing risk this warns about is not
-    reachable.
+
 
 ---
 
 ### With more time — in priority order
 
-1. **Move ingest to a job queue** (Inngest or QStash) with real progress
-   reporting. This is the single change that lifts the 200-page cap and removes
-   the 60s ceiling from the upload path.
-2. **Redis-backed rate limiting** (Upstash), so the limit is global rather than
+1. **Redis-backed rate limiting** (Upstash), so the limit is global rather than
    per instance.
-3. **A nonce-based Content-Security-Policy**, threading a nonce through
-   middleware into Next's inline hydration scripts. `unsafe-inline` would be
-   security theatre, so this was left undone rather than done badly.
-4. **A reranker over the fused candidates.** RRF is a fusion method, not a
+2. **A reranker over the fused candidates.** RRF is a fusion method, not a
    relevance model; a cross-encoder rerank of the top ~20 would measurably
    improve which 8 chunks the model actually sees.
-5. **Live comments.** Currently reload-to-see. Worth doing alongside the socket
-   infrastructure, not before.
-6. **OCR for scanned PDFs**, as a queued step where the time budget allows it.
+3. **OCR for scanned PDFs**, as a queued step where the time budget allows it.
 
-### Later limitations worth naming
-
-- **One live share link per document.** Creating a link revokes the previous one,
-  so "regenerate" genuinely cuts off something already sent. The cost is that a
-  read-only link and a commenter link cannot be live at the same time; per-role
-  links would need a different model.
-- **Guest identity is remembered by email but never verified.** That is
-  deliberate — it is not a credential, and access always comes from holding a
-  valid share token. It does mean two people sharing an inbox share a display
-  name.
-- **Token counting is `chars / 4`, not a tokenizer.** Budgets are conservative
-  enough that a 10–15% error never overflows, but a document with unusual
-  tokenisation (dense tables, non-English text) could drift further.
-- **The semantic-search threshold was calibrated on one document type.** 0.26
-  separates the measured sets cleanly; a very different corpus may need
-  re-running `scripts/calibrate-threshold.ts`.
+---
 
 ## Project layout
 
