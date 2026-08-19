@@ -1,8 +1,11 @@
 import { getCurrentUser } from '@/server/auth/session';
 import {
+  PAGE_SIZE,
+  getLibraryStats,
   listDocuments,
   searchByFilename,
   searchSemantic,
+  type StatusFilter,
 } from '@/server/documents/queries';
 import { searchSchema } from '@/lib/validation';
 import { handleApiError, json, rateLimited, unauthorized } from '@/lib/api';
@@ -26,16 +29,31 @@ export async function GET(request: Request) {
     const parsed = searchSchema.safeParse({
       q: url.searchParams.get('q') ?? '',
       mode: url.searchParams.get('mode') ?? 'filename',
+      page: url.searchParams.get('page') ?? '1',
+      status: url.searchParams.get('status') ?? 'all',
     });
 
+    /*
+     * Stats describe the whole library, never the current page or filter. The
+     * rail's counts are what a filter *would* find, so deriving them from the
+     * rows on screen would make them wrong as soon as a second page exists.
+     */
+    const stats = await getLibraryStats(user.id);
+
     if (!parsed.success) {
-      return json({ documents: await listDocuments(user.id) });
+      return json({ ...(await listDocuments(user.id)), page: 1, pageSize: PAGE_SIZE, stats });
     }
 
-    const { q, mode } = parsed.data;
+    const { q, mode, page, status } = parsed.data;
+    const offset = (page - 1) * PAGE_SIZE;
+    const paging = { limit: PAGE_SIZE, offset };
+    const envelope = { page, pageSize: PAGE_SIZE, stats };
 
     if (!q) {
-      return json({ documents: await listDocuments(user.id) });
+      return json({
+        ...(await listDocuments(user.id, { status: status as StatusFilter, ...paging })),
+        ...envelope,
+      });
     }
 
     if (mode === 'semantic') {
@@ -43,18 +61,27 @@ export async function GET(request: Request) {
       if (!limit.ok) throw rateLimited('Search limit reached. Please wait a moment.');
 
       try {
-        return json({ documents: await searchSemantic(user.id, q), mode: 'semantic' });
+        return json({
+          ...(await searchSemantic(user.id, q, paging)),
+          mode: 'semantic',
+          ...envelope,
+        });
       } catch (error) {
         console.error('[search] semantic search failed, falling back:', error);
         return json({
-          documents: await searchByFilename(user.id, q),
+          ...(await searchByFilename(user.id, q, paging)),
           mode: 'filename',
           notice: 'Semantic search is unavailable right now — showing filename matches.',
+          ...envelope,
         });
       }
     }
 
-    return json({ documents: await searchByFilename(user.id, q), mode: 'filename' });
+    return json({
+      ...(await searchByFilename(user.id, q, paging)),
+      mode: 'filename',
+      ...envelope,
+    });
   } catch (error) {
     return handleApiError(error);
   }

@@ -2,14 +2,13 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { formatDistanceToNow } from 'date-fns';
+import { format } from 'date-fns';
 import {
   AlertTriangle,
   FileText,
   Loader2,
   MoreVertical,
   RefreshCw,
-  Sparkles,
   Trash2,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -104,17 +103,20 @@ export function DocumentCard({
   const body = (
     <>
       <div className="flex items-start gap-3">
-        <div className="mt-0.5 shrink-0 rounded-md bg-primary/10 p-2">
+        <div className="mt-0.5 shrink-0 rounded-lg bg-primary/10 p-2 ring-1 ring-inset ring-primary/15">
           <FileText className="size-4 text-primary" />
         </div>
 
         <div className="min-w-0 flex-1">
-          <h3 className="truncate text-sm font-semibold" title={document.filename}>
+          <h3
+            className="truncate text-[15px] font-semibold leading-snug tracking-tight"
+            title={document.filename}
+          >
             {document.filename}
           </h3>
           <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
             <time dateTime={document.createdAt}>
-              {formatDistanceToNow(new Date(document.createdAt), { addSuffix: true })}
+              {format(new Date(document.createdAt), 'd MMM yyyy')}
             </time>
             {document.pageCount ? (
               <>
@@ -138,12 +140,11 @@ export function DocumentCard({
 
       <div className="mt-3 min-h-[3.5rem]">
         {isReady && document.summary ? (
-          <div className="space-y-1.5">
-            <p className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              <Sparkles className="size-3" />
+          <div className="space-y-1 border-l-2 border-primary/30 pl-3">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-muted-foreground">
               AI summary
             </p>
-            <p className="line-clamp-3 text-sm leading-relaxed text-muted-foreground">
+            <p className="line-clamp-3 text-[13px] leading-relaxed text-muted-foreground">
               {document.summary}
             </p>
           </div>
@@ -164,7 +165,7 @@ export function DocumentCard({
 
   return (
     <>
-      <Card className="group relative flex flex-col p-4 transition-shadow hover:shadow-md">
+      <Card className="group relative flex flex-col p-4 transition-colors hover:border-primary/40 hover:shadow-md">
         {isReady ? (
           <Link
             href={`/documents/${document.id}`}

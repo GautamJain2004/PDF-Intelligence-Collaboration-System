@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 
 import { getCurrentUser } from '@/server/auth/session';
-import { listDocuments } from '@/server/documents/queries';
+import { PAGE_SIZE, getLibraryStats, listDocuments } from '@/server/documents/queries';
 import { DashboardClient } from '@/components/dashboard/dashboard-client';
 
 export const metadata: Metadata = { title: 'Dashboard' };
@@ -14,13 +14,23 @@ export default async function DashboardPage() {
   const user = await getCurrentUser();
   if (!user) redirect('/login');
 
-  // Server-rendered first paint, then SWR takes over for search and polling.
-  const documents = await listDocuments(user.id);
+  // Server-rendered first paint, then SWR takes over for search and paging.
+  const [first, stats] = await Promise.all([
+    listDocuments(user.id),
+    getLibraryStats(user.id),
+  ]);
 
   return (
     <DashboardClient
       initial={{
-        documents: documents.map((d) => ({ ...d, createdAt: d.createdAt.toISOString() })),
+        documents: first.documents.map((d) => ({
+          ...d,
+          createdAt: d.createdAt.toISOString(),
+        })),
+        total: first.total,
+        page: 1,
+        pageSize: PAGE_SIZE,
+        stats,
       }}
     />
   );
