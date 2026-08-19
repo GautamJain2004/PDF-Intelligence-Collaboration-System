@@ -1,6 +1,6 @@
 import 'server-only';
 
-import DOMPurify from 'isomorphic-dompurify';
+import sanitizeHtml from 'sanitize-html';
 
 /**
  * Comment HTML sanitisation.
@@ -14,8 +14,17 @@ import DOMPurify from 'isomorphic-dompurify';
  * asks for (bold, italic, bullet points) plus paragraphs and a couple of
  * near-free extras. Everything else — scripts, styles, iframes, event handlers,
  * `javascript:` URLs, even links — is stripped. No allowed tag can execute
- * script or load a remote resource, so this holds up even if DOMPurify were
- * bypassed on some exotic parser quirk.
+ * script or load a remote resource, so this holds up even if the parser were
+ * confused by some exotic markup quirk.
+ *
+ * **Why `sanitize-html` and not `isomorphic-dompurify`.** DOMPurify needs a DOM,
+ * which on the server means jsdom. jsdom pulls in `html-encoding-sniffer`, a
+ * CommonJS package that `require()`s the ESM-only `@exodus/bytes`. Node 22.12+
+ * permits `require(esm)` so this worked locally, but Next.js externalises jsdom
+ * rather than bundling it, and the serverless module loader rejects the same
+ * call — every POST and GET on this route returned a 500 in production while
+ * passing every test and local check. `sanitize-html` parses with htmlparser2
+ * instead: no DOM, no jsdom, and roughly ten megabytes less to cold-start.
  */
 
 const ALLOWED_TAGS = [
@@ -34,24 +43,39 @@ const ALLOWED_TAGS = [
   'blockquote',
 ];
 
+/**
+ * Tags whose *contents* are dropped along with the tag.
+ *
+ * Everything else disallowed is unwrapped instead, keeping the text inside, so
+ * stripping `<a>` does not silently delete the words the user typed. These are
+ * the cases where the inner text is payload rather than prose — script bodies,
+ * stylesheet rules, and the fallback content of embedded frames.
+ */
+const STRIP_WITH_CONTENT = [
+  'script',
+  'style',
+  'textarea',
+  'option',
+  'noscript',
+  'template',
+  'iframe',
+  'object',
+  'embed',
+];
+
 export function sanitizeCommentHtml(dirty: string): string {
-  return DOMPurify.sanitize(dirty, {
-    ALLOWED_TAGS,
+  return sanitizeHtml(dirty, {
+    allowedTags: ALLOWED_TAGS,
     // No attributes at all. Nothing in the allowlist needs one, and permitting
-    // none removes every attribute-based injection vector in a single stroke.
-    ALLOWED_ATTR: [],
-    // Defence in depth: these stay banned even if the tag list is widened later.
-    FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'embed', 'form', 'input'],
-    FORBID_ATTR: ['style', 'onerror', 'onload', 'onclick'],
-    // Keep the text inside a removed tag, so stripping `<a>` does not silently
-    // delete the words the user typed.
-    KEEP_CONTENT: true,
-    /*
-     * NOTE: do not add `USE_PROFILES` here. It *replaces* ALLOWED_TAGS with the
-     * profile's much broader tag set rather than intersecting with it, which
-     * silently let `<img>` and `<a>` through. Caught by the tests in this
-     * module's spec — keep them.
-     */
+    // none removes every attribute-based injection vector in a single stroke —
+    // event handlers, inline styles and `javascript:` URLs all included.
+    allowedAttributes: {},
+    // With no attributes surviving there is no URL left to carry a scheme, so
+    // this is belt-and-braces rather than the primary defence.
+    allowedSchemes: [],
+    // Unwrap unknown tags, keeping their text.
+    disallowedTagsMode: 'discard',
+    nonTextTags: STRIP_WITH_CONTENT,
   });
 }
 
