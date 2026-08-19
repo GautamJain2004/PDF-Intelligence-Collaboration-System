@@ -1,5 +1,5 @@
 import { requireDocumentOwner } from '@/server/auth/access';
-import { createShare, listShares } from '@/server/documents/shares';
+import { createShare, listShares, revokeAllShares } from '@/server/documents/shares';
 import { createShareSchema } from '@/lib/validation';
 import { handleApiError, json, parseJson } from '@/lib/api';
 import { sendEmail } from '@/server/email/send';
@@ -36,16 +36,22 @@ export async function POST(
 ) {
   try {
     const { id } = await params;
-    const { document, userName } = await requireDocumentOwner(id);
+    const { document, userName, userEmail } = await requireDocumentOwner(id);
 
-    const { email, role, expiresInDays } = await parseJson(request, createShareSchema);
+    const { email, role } = await parseJson(request, createShareSchema);
+
+    /*
+     * A document has at most one live link. Regenerating is the owner's way of
+     * cutting off a link they already sent, which only means anything if the
+     * previous one stops working.
+     */
+    const replaced = await revokeAllShares(id);
 
     const share = await createShare({
       documentId: id,
       createdBy: document.ownerId,
       invitedEmail: email ?? null,
       role,
-      expiresInDays: expiresInDays ?? null,
     });
 
     let emailDelivered: boolean | null = null;
@@ -60,7 +66,9 @@ export async function POST(
         summary: document.summary,
       });
 
-      const result = await sendEmail({ to: email, ...mail });
+      // Sent from the deployment's mailbox on this owner's behalf, so replies
+      // are routed back to them rather than to whoever runs the deployment.
+      const result = await sendEmail({ to: email, replyTo: userEmail, ...mail });
       emailDelivered = result.sent;
       // Surfaced to the owner so a delivery problem is explained, not just
       // reported. Only ever shown to the document's owner.
@@ -69,7 +77,13 @@ export async function POST(
 
     return json(
       {
-        share: { id: share.id, url: share.url, role },
+        share: {
+          id: share.id,
+          url: share.url,
+          role,
+          expiresAt: share.expiresAt.toISOString(),
+        },
+        replaced,
         emailDelivered,
         emailMessage,
       },
