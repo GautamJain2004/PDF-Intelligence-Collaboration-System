@@ -90,10 +90,4 @@ export const db = new Proxy({} as DrizzleClient, {
   },
 });
 
-/** Raw postgres.js handle, for the rare query Drizzle cannot express. */
-export function rawSql() {
-  connect();
-  return globalForDb.__pdfiqSql!;
-}
-
 export type Db = DrizzleClient;
