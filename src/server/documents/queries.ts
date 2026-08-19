@@ -256,20 +256,3 @@ export async function searchSemantic(
     })),
   };
 }
-
-/** Lightweight status poll used while a document is processing. */
-export async function getDocumentStatus(ownerId: string, documentId: string) {
-  const [row] = await db
-    .select({
-      id: documents.id,
-      status: documents.status,
-      summary: documents.summary,
-      error: documents.error,
-      pageCount: documents.pageCount,
-    })
-    .from(documents)
-    .where(and(eq(documents.id, documentId), eq(documents.ownerId, ownerId)))
-    .limit(1);
-
-  return row ?? null;
-}

@@ -54,7 +54,7 @@ export type SummaryResult = {
 };
 
 /** Trims model output down to the requested 3-5 sentences. */
-export function tidySummary(text: string): string {
+function tidySummary(text: string): string {
   const cleaned = text
     .trim()
     // Models occasionally wrap output in quotes or lead with a label.

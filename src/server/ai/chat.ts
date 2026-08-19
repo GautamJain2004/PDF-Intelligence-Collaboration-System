@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { generateText } from 'ai';
 
 import { db } from '@/server/db/client';

@@ -18,7 +18,7 @@ import type { ShareRole } from '@/server/db/schema';
  * lookup and an authenticated ciphertext for redisplay.
  */
 
-export function shareUrl(token: string): string {
+function shareUrl(token: string): string {
   return `${env().APP_URL}/s/${token}`;
 }
 

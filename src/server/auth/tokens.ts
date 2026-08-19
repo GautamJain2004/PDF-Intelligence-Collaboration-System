@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 
 import { env } from '@/lib/env';
 
@@ -38,14 +38,6 @@ export function hashToken(token: string): string {
   return createHash('sha256')
     .update(`${env().AUTH_SECRET}:${token}`)
     .digest('hex');
-}
-
-/** Constant-time comparison, for the rare path that compares hashes directly. */
-export function safeEqual(a: string, b: string): boolean {
-  const bufA = Buffer.from(a, 'utf8');
-  const bufB = Buffer.from(b, 'utf8');
-  if (bufA.length !== bufB.length) return false;
-  return timingSafeEqual(bufA, bufB);
 }
 
 /** Issues a token alongside the hash to persist. */

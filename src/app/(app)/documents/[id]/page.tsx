@@ -54,7 +54,6 @@ export default async function DocumentPage({
         summary={doc.summary}
         status={doc.status}
         pageCount={doc.pageCount}
-        canComment
         viewerName={user.name}
         isOwner={access.kind === 'owner'}
       />

@@ -13,7 +13,6 @@ import {
 import { toast } from 'sonner';
 
 import { Avatar, Badge, EmptyState } from '@/components/ui/misc';
-import { Button } from '@/components/ui/button';
 import { CommentEditor } from './comment-editor';
 import { apiFetch, swrFetcher } from '@/lib/fetcher';
 import { cn } from '@/lib/utils';

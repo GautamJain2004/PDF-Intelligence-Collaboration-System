@@ -1,7 +1,7 @@
 import 'server-only';
 
 import { cookies } from 'next/headers';
-import { eq, and, lt, gt, isNull, or } from 'drizzle-orm';
+import { eq, and, gt, isNull, or } from 'drizzle-orm';
 
 import { db } from '@/server/db/client';
 import { sessions, users, guestSessions, documentShares } from '@/server/db/schema';
@@ -136,11 +136,6 @@ export async function destroyCurrentSession(): Promise<void> {
  */
 export async function destroyAllUserSessions(userId: string): Promise<void> {
   await db.delete(sessions).where(eq(sessions.userId, userId));
-}
-
-/** Opportunistic cleanup of expired rows. */
-export async function pruneExpiredSessions(): Promise<void> {
-  await db.delete(sessions).where(lt(sessions.expiresAt, new Date()));
 }
 
 // ---------------------------------------------------------------------------

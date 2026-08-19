@@ -27,7 +27,7 @@ export type GuestIdentityRecord = {
 };
 
 /** Normalised once, here, so lookups can rely on the unique index matching. */
-export function normaliseEmail(email: string): string {
+function normaliseEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 

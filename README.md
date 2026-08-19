@@ -27,7 +27,9 @@ have to create an account.
   - [Prompt design](#prompt-design)
 - [Access control model](#access-control-model)
 - [Security](#security)
+- [Key decisions and rejected alternatives](#key-decisions-and-rejected-alternatives)
 - [Known limitations and trade-offs](#known-limitations-and-trade-offs)
+  - [With more time](#with-more-time--in-priority-order)
 
 ---
 
@@ -73,7 +75,7 @@ have to create an account.
 | PDF viewer | `react-pdf` | Page navigation, so citations can deep-link |
 | LLM | OpenAI via Vercel AI SDK | Gemini's free tier caps `generate_content` at 20/day/model — a deployed demo 429s within minutes |
 | Editor | Tiptap | Constrained to exactly the allowed formatting |
-| Email | Resend | Free tier; optional |
+| Email | SMTP (Gmail) with Resend fallback | Resend's sandbox sender reaches only the account owner; SMTP reaches any invitee with no domain purchase |
 
 ---
 
@@ -626,9 +628,83 @@ don't leak to third parties), `Permissions-Policy`, HSTS.
 
 ---
 
+## Key decisions and rejected alternatives
+
+The decisions worth defending, each with what was considered instead.
+
+### Opaque database sessions, not JWT
+
+A 256-bit random token in an httpOnly cookie; the server stores a peppered
+SHA-256 of it and looks the session up per request.
+
+**Rejected: JWT.** The deciding factor is **revocation**. A JWT stays valid
+until it expires, because verification is local — there is nothing to
+invalidate. Adding a denylist means a database read per request anyway, leaving
+a stateless token with a stateful check bolted onto it.
+
+This app needs revocation to be immediate and total. Sign-out, password reset,
+and above all **share-link revocation** must cut access off on the very next
+request — that is a headline behaviour here, not an edge case. A row lookup
+makes it a single `UPDATE`.
+
+The cost is honest: one indexed query per authenticated request, sub-millisecond
+at this scale. It buys correctness on the property that actually matters.
+
+**Also rejected: JWT in `localStorage`**, readable by any XSS. The session
+cookie is `httpOnly`, so script cannot exfiltrate it at all.
+
+### Polling, not WebSockets
+
+The dashboard polls every 2.5s **only while a document is still processing**, and
+stops the moment nothing is pending — an idle dashboard makes zero background
+requests.
+
+**Rejected: WebSockets.** They would mean a stateful connection, a reconnection
+strategy, and something to hold the socket open on serverless, in exchange for a
+progress indicator with a known, short lifetime. Ingest takes seconds and happens
+once per upload.
+
+The same reasoning applies to comments: new comments appear on reload rather than
+live. Real-time collaboration would need the same infrastructure for a
+collaboration model this app does not have.
+
+### Chat history: a fixed sliding window, not summarised older turns
+
+The last **5 turns** (10 messages) are replayed, each capped at 6,000 characters.
+
+**Rejected: summarising older turns into a running digest.** It adds an LLM call
+to the latency path on *every* message, and introduces a second place for
+information to be silently lost. At a five-turn window the problem it solves has
+not appeared yet — this is the kind of machinery worth adding when a real
+conversation length demands it, not before.
+
+The per-message cap exists so one enormous pasted message cannot crowd out the
+retrieved excerpts. History is context; the excerpts are the answer source, and
+they must not be starved.
+
+Transcripts are **per actor**: an owner never sees a guest's questions, and two
+guests on the same link do not share one. That is a privacy decision — the
+questions someone asks about a document can be more revealing than the document.
+
+### Text chunked once at ingest, not parsed per request
+
+Extraction, chunking, embedding and summarising all happen once
+(`src/server/documents/ingest.ts`).
+
+**Rejected: re-extracting per question.** `unpdf` on a 33-page PDF costs seconds,
+and chat would inherit that on every turn for text that never changes.
+**Rejected: one large `text` column.** You cannot vector-search a blob; every
+question would send the whole document or chunk it on the fly.
+
+Chunks keep `pageFrom`/`pageTo`, which is what makes citations clickable.
+
+---
+
 ## Known limitations and trade-offs
 
-Stated plainly, as the brief invites.
+Stated plainly, as the brief invites. Each is a **known** limit with a reason,
+not something discovered late — and where there is a clear next step, it is named
+under *"with more time"*.
 
 1. **No OCR — scanned PDFs are rejected, not silently mangled.** A PDF that is
    images with no text layer is detected and the user is told exactly that.
@@ -750,6 +826,40 @@ Stated plainly, as the brief invites.
     reachable.
 
 ---
+
+### With more time — in priority order
+
+1. **Move ingest to a job queue** (Inngest or QStash) with real progress
+   reporting. This is the single change that lifts the 200-page cap and removes
+   the 60s ceiling from the upload path.
+2. **Redis-backed rate limiting** (Upstash), so the limit is global rather than
+   per instance.
+3. **A nonce-based Content-Security-Policy**, threading a nonce through
+   middleware into Next's inline hydration scripts. `unsafe-inline` would be
+   security theatre, so this was left undone rather than done badly.
+4. **A reranker over the fused candidates.** RRF is a fusion method, not a
+   relevance model; a cross-encoder rerank of the top ~20 would measurably
+   improve which 8 chunks the model actually sees.
+5. **Live comments.** Currently reload-to-see. Worth doing alongside the socket
+   infrastructure, not before.
+6. **OCR for scanned PDFs**, as a queued step where the time budget allows it.
+
+### Later limitations worth naming
+
+- **One live share link per document.** Creating a link revokes the previous one,
+  so "regenerate" genuinely cuts off something already sent. The cost is that a
+  read-only link and a commenter link cannot be live at the same time; per-role
+  links would need a different model.
+- **Guest identity is remembered by email but never verified.** That is
+  deliberate — it is not a credential, and access always comes from holding a
+  valid share token. It does mean two people sharing an inbox share a display
+  name.
+- **Token counting is `chars / 4`, not a tokenizer.** Budgets are conservative
+  enough that a 10–15% error never overflows, but a document with unusual
+  tokenisation (dense tables, non-English text) could drift further.
+- **The semantic-search threshold was calibrated on one document type.** 0.26
+  separates the measured sets cleanly; a very different corpus may need
+  re-running `scripts/calibrate-threshold.ts`.
 
 ## Project layout
 

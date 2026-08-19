@@ -78,7 +78,6 @@ export function DocumentWorkspace({
   summary: initialSummary,
   status: initialStatus,
   pageCount,
-  canComment,
   viewerName,
   isOwner,
 }: {
@@ -87,7 +86,6 @@ export function DocumentWorkspace({
   summary?: string | null;
   status?: 'uploading' | 'processing' | 'ready' | 'failed';
   pageCount?: number | null;
-  canComment: boolean;
   viewerName: string;
   isOwner: boolean;
 }) {

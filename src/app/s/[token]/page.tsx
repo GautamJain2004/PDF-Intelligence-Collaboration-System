@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { FileText, Link2Off } from 'lucide-react';
+import { Link2Off } from 'lucide-react';
 
 import { resolveShareToken } from '@/server/documents/shares';
 import { getGuestForShare } from '@/server/auth/session';
@@ -112,7 +112,6 @@ export default async function SharePage({
       <DocumentWorkspace
         documentId={share.documentId}
         filename={share.filename}
-        canComment={share.role === 'commenter'}
         /*
          * Whoever actually entered. A signed-in visitor who chose to take part
          * as a guest is a guest here — labelling the header with their account
