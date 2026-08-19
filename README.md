@@ -71,7 +71,7 @@ have to create an account.
 | Auth | Custom: Argon2id + opaque DB sessions | Revocable server-side; no JWT-in-localStorage |
 | PDF text | `unpdf` | Serverless-native pdf.js; `pdf-parse` breaks on Vercel |
 | PDF viewer | `react-pdf` | Page navigation, so citations can deep-link |
-| LLM | Google Gemini via Vercel AI SDK | Only major provider with a free tier for **both** chat and embeddings |
+| LLM | OpenAI via Vercel AI SDK | Gemini's free tier caps `generate_content` at 20/day/model — a deployed demo 429s within minutes |
 | Editor | Tiptap | Constrained to exactly the allowed formatting |
 | Email | Resend | Free tier; optional |
 
@@ -95,7 +95,7 @@ You need three things, all free:
 1. **Supabase project** — [supabase.com](https://supabase.com) → New project.
    Copy the pooler connection strings and the service-role key. Create a
    **private** bucket named `pdfs` (Storage → New bucket → Public **off**).
-2. **Gemini API key** — [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
+2. **OpenAI API key** — [platform.openai.com/api-keys](https://platform.openai.com/api-keys).
 3. **An `AUTH_SECRET`** — `openssl rand -base64 48`.
 
 ---
@@ -114,10 +114,10 @@ template.
 | `SUPABASE_URL` | ✅ | Storage endpoint |
 | `SUPABASE_SERVICE_ROLE_KEY` | ✅ | Server-side storage access |
 | `SUPABASE_STORAGE_BUCKET` | — | Defaults to `pdfs` |
-| `GOOGLE_GENERATIVE_AI_API_KEY` | ✅ | Summaries, chat, embeddings |
-| `GEMINI_CHAT_MODEL` | — | Default `gemini-2.5-flash` |
-| `GEMINI_FAST_MODEL` | — | Default `gemini-2.5-flash-lite` |
-| `GEMINI_EMBEDDING_MODEL` | — | Default `gemini-embedding-001` |
+| `OPENAI_API_KEY` | ✅ | Summaries, chat, embeddings |
+| `OPENAI_CHAT_MODEL` | — | Default `gpt-4.1-mini` |
+| `OPENAI_FAST_MODEL` | — | Default `gpt-4.1-nano` |
+| `OPENAI_EMBEDDING_MODEL` | — | Default `text-embedding-3-small`, requested at 768 dims |
 | `APP_URL` | ✅ | Absolute origin for share and reset links |
 | `SMTP_USER` | — | SMTP login. Set with `SMTP_PASS` to enable email (recommended) |
 | `SMTP_PASS` | — | SMTP password. For Gmail, a 16-char **App Password** |
@@ -149,14 +149,15 @@ npm run db:studio     # browse data
 | `0000_init` | Tables, indexes, extensions, CHECK constraints |
 | `0001_share_token_encryption` | Adds `token_encrypted` so owners can re-copy share links |
 | `0002_lockdown_postgrest_access` | **Security-critical.** Enables RLS and revokes anon grants — see [The PostgREST hole](#the-postgrest-hole-found-exploited-fixed). Do not skip. |
+| `0003_guest_identities` | Adds `guest_identities` so a returning visitor keeps one name across links |
 
 `0000_init.sql` begins with `CREATE EXTENSION` for `vector` and `pg_trgm`.
 drizzle-kit does not emit extension DDL, so those two lines are a **deliberate
 manual addition** — preserve them if you regenerate.
 
 **Tables:** `users`, `sessions`, `password_reset_tokens`, `documents`,
-`document_chunks`, `document_shares`, `guest_sessions`, `comments`,
-`chat_messages`.
+`document_chunks`, `document_shares`, `guest_identities`, `guest_sessions`,
+`comments`, `chat_messages`.
 
 Indexes worth noting:
 
@@ -219,7 +220,7 @@ DIRECT_URL=postgresql://postgres:testpass@localhost:55432/pdfiq
 ```
 
 Auth, sharing, comments, and access control all work this way. Upload and the
-AI features still need Supabase Storage and a Gemini key.
+AI features still need Supabase Storage and an OpenAI key.
 
 ---
 
@@ -289,7 +290,7 @@ Browser ──► Next.js (Vercel)
                      │
         ┌────────────┼─────────────────────────┐
         ▼            ▼                         ▼
-  Supabase       Supabase Storage         Google Gemini
+  Supabase       Supabase Storage         OpenAI
   Postgres       (private bucket)         (server-only key)
   + pgvector     signed URLs only         chat / embed / summarise
 ```
@@ -326,11 +327,17 @@ cannot produce duplicates.
 
 ## The AI pipeline
 
-**Model:** Google Gemini. `gemini-2.5-flash` for summaries and answers,
-`gemini-2.5-flash-lite` for the mechanical sub-tasks that sit in the latency
-path, `gemini-embedding-001` for vectors. Chosen because it is the only major
-provider whose free tier covers **both** chat and embeddings, so the whole app
-runs on one no-cost key.
+**Model:** OpenAI. `gpt-4.1-mini` for summaries and grounded answers,
+`gpt-4.1-nano` for the mechanical sub-tasks in the latency path (query
+rewriting, map-step notes), and `text-embedding-3-small` at **768 dimensions**
+for vectors.
+
+Gemini was the original choice for its free tier, and was dropped after
+measuring it: flash models allow only 20 `generate_content` requests *per day*
+per project, which a single ingest plus a short conversation exhausts
+(`RESOURCE_EXHAUSTED … limit: 20`). A reviewer opening the deployed app would
+hit a 429 within minutes. OpenAI costs cents at this scale and removes that
+failure mode. No Google SDK remains in the project.
 
 ### Summaries
 
@@ -395,13 +402,16 @@ the narrative and makes cross-references between excerpts harder to follow.
 
 Two embedding details that materially affect quality:
 
-- **Asymmetric task types.** Passages are embedded with `RETRIEVAL_DOCUMENT`,
-  queries with `RETRIEVAL_QUERY`. A question and the passage answering it are
-  not the same kind of text.
-- **Manual L2 normalisation.** `gemini-embedding-001` only returns unit-length
-  vectors at its native 3072 dims. We request **768** (pgvector's HNSW index
-  rejects >2000) and truncated outputs are *not* normalised — so cosine distance
-  would be subtly wrong without normalising ourselves.
+- **No task types — compensated in retrieval.** Gemini distinguishes
+  `RETRIEVAL_DOCUMENT` from `RETRIEVAL_QUERY`, which helps because a question
+  and the passage answering it are different kinds of text. OpenAI's embeddings
+  are symmetric and offer no equivalent, so that advantage is gone. The hybrid
+  retrieval in `retrieve.ts` covers the gap: its full-text half catches the
+  exact-term matches symmetric dense retrieval is weakest on.
+- **Manual L2 normalisation.** OpenAI returns unit-length vectors only at native
+  dimensionality. We request **768** via Matryoshka truncation (pgvector's HNSW
+  index rejects >2000), and truncated outputs are *not* unit length — so cosine
+  distance would be subtly wrong without normalising ourselves.
 
 ### Chat
 
@@ -476,10 +486,31 @@ requireDocumentAccess(documentId) →
 which document IDs exist.
 
 **Guests need no account.** `/s/<token>` → the server verifies the token hash →
-the visitor supplies a display name → an httpOnly cookie **scoped to that one
+the visitor identifies themselves → an httpOnly cookie **scoped to that one
 share** is issued. It grants access to exactly one document and is not an
-application session. A visitor holding several links keeps a separate identity
-for each.
+application session.
+
+The entry screen offers two routes: continue as a guest, or sign in to an
+existing account (`/login?next=/s/<token>`, with a guard rejecting absolute and
+protocol-relative targets so the parameter cannot become an open redirect).
+
+**Guests are remembered by email.** A guest supplies an email and, optionally, a
+name; `guest_identities` maps that address to the name they chose and reuses it
+on every later link. Comments therefore stay attributed to one person instead of
+a series of strangers, and the comment sidebar tags them `(guest)` so guest and
+account-holder contributions are never confused.
+
+That row is **not a credential**: no password, no verification, and the email is
+resolved only *after* the share token validates. Knowing an address grants
+nothing — access still comes entirely from holding a valid link. For the same
+reason the join form does not look up a name as you type, since that endpoint
+would answer "has this address commented before?" for anyone holding a link.
+
+**Links live one hour.** A share link is a bearer capability, so its lifetime is
+the window in which a leaked link is exploitable (`SHARE_TTL_MINUTES` in
+`src/server/documents/shares.ts`). Creating a new link **revokes every previous
+link for that document**, so regenerating is a real way to cut off something
+already sent — a document has at most one live link.
 
 **Revocation is immediate.** Every access check re-reads `revoked_at` and
 `expires_at`, so revoking a link cuts off guests who already hold a cookie on

@@ -5,7 +5,27 @@ import { AuthForm } from '@/components/auth/auth-form';
 
 export const metadata: Metadata = { title: 'Sign in' };
 
-export default function LoginPage() {
+/**
+ * Restricts post-login redirects to paths inside this app.
+ *
+ * Without this an attacker could send `/login?next=https://evil.example` and
+ * bounce a freshly authenticated user off-site — the classic open redirect. A
+ * protocol-relative `//host` is rejected for the same reason: browsers treat it
+ * as absolute.
+ */
+function safeNext(next: string | undefined): string {
+  if (!next) return '/dashboard';
+  if (!next.startsWith('/') || next.startsWith('//')) return '/dashboard';
+  return next;
+}
+
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ next?: string }>;
+}) {
+  const { next } = await searchParams;
+
   return (
     <div className="space-y-6">
       <div className="space-y-1.5">
@@ -17,7 +37,7 @@ export default function LoginPage() {
 
       <AuthForm
         endpoint="/api/auth/login"
-        redirectTo="/dashboard"
+        redirectTo={safeNext(next)}
         submitLabel="Sign in"
         pendingLabel="Signing in…"
         fields={[

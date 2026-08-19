@@ -191,26 +191,34 @@ export function DocumentWorkspace({
           ~660px body, which is space the comment and chat panels need far more.
         */}
         {summary ? (
-          <div className="border-t border-border bg-muted/40 px-3 py-2 sm:px-4">
-            <div className="flex items-start gap-2">
-              <p className="flex shrink-0 items-center gap-1.5 pt-0.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          <div className="border-t border-border bg-muted/30 px-3 py-2.5 sm:px-4">
+            {/*
+              Capped at a readable measure. Left unbounded the paragraph
+              stretched the full viewport — around 250 characters per line on a
+              wide monitor, which the eye cannot track back from — and pushed
+              the toggle so far right it read as unrelated to the text.
+            */}
+            <div className="flex max-w-[92ch] items-baseline gap-x-2.5 gap-y-1">
+              <span className="flex shrink-0 items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.09em] text-muted-foreground">
                 <Sparkles className="size-3 text-primary" />
                 <span className="hidden sm:inline">AI summary</span>
-              </p>
+              </span>
+
               <p
                 className={cn(
-                  'min-w-0 flex-1 text-[13px] leading-relaxed text-muted-foreground',
+                  'min-w-0 flex-1 text-[13px] leading-[1.6] text-foreground/85',
                   summaryExpanded ? '' : 'line-clamp-2',
                 )}
               >
                 {summary}
               </p>
+
               <button
                 onClick={() => setSummaryExpanded((v) => !v)}
-                className="shrink-0 rounded px-1 pt-0.5 text-[11px] font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="shrink-0 rounded text-[11px] font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 aria-expanded={summaryExpanded}
               >
-                {summaryExpanded ? 'Less' : 'More'}
+                {summaryExpanded ? 'Show less' : 'Show more'}
               </button>
             </div>
           </div>

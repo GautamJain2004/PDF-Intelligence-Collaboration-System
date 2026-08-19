@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { formatDistanceToNow } from 'date-fns';
+import { format } from 'date-fns';
 import {
   AlertTriangle,
   FileText,
@@ -116,7 +116,7 @@ export function DocumentCard({
           </h3>
           <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
             <time dateTime={document.createdAt}>
-              {formatDistanceToNow(new Date(document.createdAt), { addSuffix: true })}
+              {format(new Date(document.createdAt), 'd MMM yyyy')}
             </time>
             {document.pageCount ? (
               <>

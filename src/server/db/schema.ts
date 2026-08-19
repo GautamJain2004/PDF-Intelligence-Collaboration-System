@@ -17,10 +17,10 @@ import { relations, sql } from 'drizzle-orm';
 /**
  * Embedding width.
  *
- * gemini-embedding-001 emits 3072 dimensions by default, but pgvector's HNSW
- * index rejects anything above 2000. We request 768 via `outputDimensionality`,
- * which keeps the index available and the table small. Vectors are L2-normalised
- * before insert (Google does not normalise truncated outputs), so cosine
+ * text-embedding-3-small emits 1536 dimensions by default, and pgvector's HNSW
+ * index rejects anything above 2000. We request 768 via Matryoshka truncation,
+ * which keeps the index available and the table small. Truncated outputs are
+ * not unit length, so vectors are L2-normalised before insert and cosine
  * distance behaves correctly.
  */
 export const EMBEDDING_DIMENSIONS = 768;
@@ -228,6 +228,32 @@ export const documentShares = pgTable(
  * display name. Scoped to a single share, so the resulting cookie grants access
  * to exactly one document and is not an application session.
  */
+/**
+ * A returning visitor, keyed by email.
+ *
+ * Guests have no account, but the same person is often sent the same document
+ * twice — or a second document — and re-typing their name each time makes their
+ * comments look like they came from different people. This is the minimum
+ * durable identity that fixes that: an email and the name they chose, reused
+ * across every share link they open.
+ *
+ * Deliberately NOT a credential. There is no password and no verification, so
+ * it grants nothing on its own; access still comes entirely from holding a
+ * valid share token. It exists only to keep attribution stable.
+ */
+export const guestIdentities = pgTable(
+  'guest_identities',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** Stored lowercased by the caller so lookups are case-insensitive. */
+    email: text('email').notNull(),
+    displayName: text('display_name').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('guest_identities_email_unique').on(t.email)],
+);
+
 export const guestSessions = pgTable(
   'guest_sessions',
   {
@@ -235,6 +261,14 @@ export const guestSessions = pgTable(
     shareId: uuid('share_id')
       .notNull()
       .references(() => documentShares.id, { onDelete: 'cascade' }),
+    /**
+     * The returning visitor this session belongs to. Nullable so sessions
+     * created before guest identities existed keep working.
+     */
+    identityId: uuid('identity_id').references(() => guestIdentities.id, {
+      onDelete: 'set null',
+    }),
+    /** Denormalised so attribution survives an identity being removed. */
     displayName: text('display_name').notNull(),
     tokenHash: text('token_hash').notNull(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),

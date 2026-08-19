@@ -157,13 +157,14 @@ export async function pruneExpiredSessions(): Promise<void> {
 export async function createGuestSession(
   shareId: string,
   displayName: string,
+  identityId?: string | null,
 ): Promise<{ guestId: string; displayName: string }> {
   const { token, tokenHash } = issueToken();
   const expiresAt = new Date(Date.now() + days(GUEST_TTL_DAYS));
 
   const [row] = await db
     .insert(guestSessions)
-    .values({ shareId, displayName, tokenHash, expiresAt })
+    .values({ shareId, displayName, tokenHash, expiresAt, identityId: identityId ?? null })
     .returning({ id: guestSessions.id, displayName: guestSessions.displayName });
 
   const store = await cookies();
@@ -176,6 +177,8 @@ export type GuestIdentity = {
   guestId: string;
   shareId: string;
   displayName: string;
+  /** Set when the visitor entered as a guest; null when via their account. */
+  identityId: string | null;
   documentId: string;
   role: 'viewer' | 'commenter';
 };
@@ -197,6 +200,7 @@ export async function getGuestForShare(shareId: string): Promise<GuestIdentity |
       guestId: guestSessions.id,
       shareId: guestSessions.shareId,
       displayName: guestSessions.displayName,
+      identityId: guestSessions.identityId,
       documentId: documentShares.documentId,
       role: documentShares.role,
     })

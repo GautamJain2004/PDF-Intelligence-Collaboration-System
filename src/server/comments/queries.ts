@@ -19,6 +19,8 @@ export type CommentNode = {
   authorName: string;
   /** True when written by the document's owner, for the "Owner" badge. */
   isOwner: boolean;
+  /** True when written by an account-less visitor, for the "guest" tag. */
+  isGuest: boolean;
   /** True when written by the current viewer, who may delete it. */
   isMine: boolean;
   bodyHtml: string;
@@ -28,8 +30,9 @@ export type CommentNode = {
   replies: CommentNode[];
 };
 
+/** Who is looking. `user` covers both the owner and someone shared in. */
 type Viewer =
-  | { kind: 'owner'; userId: string }
+  | { kind: 'user'; userId: string }
   | { kind: 'guest'; guestId: string };
 
 /**
@@ -53,7 +56,7 @@ export async function listComments(
 
   for (const row of rows) {
     const isMine =
-      viewer.kind === 'owner'
+      viewer.kind === 'user'
         ? row.authorUserId === viewer.userId
         : row.authorGuestId === viewer.guestId;
 
@@ -62,6 +65,7 @@ export async function listComments(
       parentId: row.parentId,
       authorName: row.authorName,
       isOwner: row.authorUserId === ownerUserId,
+      isGuest: row.authorGuestId !== null,
       isMine: Boolean(isMine) && !row.deletedAt,
       // Deleted comments must not ship their original body to the client.
       bodyHtml: row.deletedAt ? '' : row.bodyHtml,
@@ -138,7 +142,7 @@ export async function deleteOwnComment(
   viewer: Viewer,
 ): Promise<boolean> {
   const authorPredicate =
-    viewer.kind === 'owner'
+    viewer.kind === 'user'
       ? eq(comments.authorUserId, viewer.userId)
       : eq(comments.authorGuestId, viewer.guestId);
 

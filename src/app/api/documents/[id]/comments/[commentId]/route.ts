@@ -1,4 +1,4 @@
-import { requireDocumentAccess } from '@/server/auth/access';
+import { requireDocumentAccess, viewerIdentity } from '@/server/auth/access';
 import { deleteOwnComment } from '@/server/comments/queries';
 import { handleApiError, json, notFound } from '@/lib/api';
 
@@ -20,12 +20,7 @@ export async function DELETE(
     const { id, commentId } = await params;
     const access = await requireDocumentAccess(id);
 
-    const viewer =
-      access.kind === 'owner'
-        ? ({ kind: 'owner', userId: access.userId } as const)
-        : ({ kind: 'guest', guestId: access.guestId } as const);
-
-    const deleted = await deleteOwnComment(commentId, id, viewer);
+    const deleted = await deleteOwnComment(commentId, id, viewerIdentity(access));
     if (!deleted) throw notFound('Comment not found.');
 
     return json({ ok: true });

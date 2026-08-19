@@ -9,7 +9,13 @@
  */
 import { config } from 'dotenv';
 
+/*
+ * Both files, in precedence order: dotenv does not overwrite a variable that is
+ * already set, so `.env.local` wins where the two overlap. Loading only one of
+ * them makes this script fail on a machine that happens to use the other.
+ */
 config({ path: '.env.local', quiet: true });
+config({ path: '.env', quiet: true });
 
 const SUMMARY =
   'An employment agreement dated 14 March 2024 between Northwind Analytics Ltd and ' +

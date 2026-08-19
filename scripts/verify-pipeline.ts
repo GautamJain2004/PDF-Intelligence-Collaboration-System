@@ -189,9 +189,9 @@ async function main() {
     // --- 11. Semantic dashboard search -----------------------------------
     step('11. Semantic search (the assignment’s example)');
     for (const q of ['employment contract', 'confidentiality obligations', 'pizza recipes']) {
-      const results = await searchSemantic(userId, q);
+      const { documents: results, total } = await searchSemantic(userId, q);
       const top = results[0];
-      console.log(`   "${q}" -> ${results.length} result(s)${top ? ` | top: ${top.filename} (relevance ${top.relevance?.toFixed(3)})` : ''}`);
+      console.log(`   "${q}" -> ${total} result(s)${top ? ` | top: ${top.filename} (relevance ${top.relevance?.toFixed(3)})` : ''}`);
     }
 
     console.log('\n' + '='.repeat(70));

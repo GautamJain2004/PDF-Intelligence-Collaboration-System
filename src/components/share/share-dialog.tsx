@@ -84,7 +84,6 @@ export function ShareDialog({
   const [email, setEmail] = React.useState('');
   const [role, setRole] = React.useState<'viewer' | 'commenter'>('commenter');
   const [creating, setCreating] = React.useState(false);
-  const [justCreated, setJustCreated] = React.useState<string | null>(null);
   /** Explanation shown inline when a notification email could not be delivered. */
   const [emailNotice, setEmailNotice] = React.useState<string | null>(null);
 
@@ -93,15 +92,17 @@ export function ShareDialog({
     swrFetcher,
   );
 
-  const shares = data?.shares ?? [];
+  // At most one link is live at a time; the server revokes the rest.
+  const active = data?.shares?.[0] ?? null;
 
   async function createShare(withEmail: boolean) {
     setCreating(true);
-    setJustCreated(null);
+    setEmailNotice(null);
 
     try {
       const result = await apiFetch<{
-        share: { url: string };
+        share: { url: string; expiresAt: string };
+        replaced: number;
         emailDelivered: boolean | null;
         emailMessage: string | null;
       }>(`/api/documents/${documentId}/shares`, {
@@ -112,7 +113,6 @@ export function ShareDialog({
         },
       });
 
-      setJustCreated(result.share.url);
       setEmailNotice(result.emailMessage ?? null);
       await mutate();
 
@@ -129,7 +129,12 @@ export function ShareDialog({
         }
         setEmail('');
       } else {
-        toast.success('Share link created');
+        toast.success('Share link created', {
+          description:
+            result.replaced > 0
+              ? 'Valid for 1 hour. The previous link has been revoked.'
+              : 'Valid for 1 hour.',
+        });
       }
     } catch (error) {
       toast.error('Could not create share link', {
@@ -158,13 +163,15 @@ export function ShareDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg overflow-x-hidden">
         <DialogHeader>
           <DialogTitle>Share document</DialogTitle>
           <DialogDescription>
             Anyone with the link can open{' '}
             <span className="font-medium text-foreground">{filename}</span> without
-            creating an account.
+            creating an account. Links are valid for{' '}
+            <span className="font-medium text-foreground">1 hour</span>, and creating a
+            new one revokes the previous link.
           </DialogDescription>
         </DialogHeader>
 
@@ -239,111 +246,91 @@ export function ShareDialog({
           Create a link to copy
         </Button>
 
-        {justCreated ? (
-          <div
-            className={cn(
-              'space-y-1.5 rounded-md border p-3',
-              emailNotice
-                ? 'border-warning/30 bg-warning/10'
-                : 'border-success/25 bg-success/10',
-            )}
-          >
-            <p className="text-xs font-medium">
-              {emailNotice ? 'Link ready — email not delivered' : 'New link ready'}
+        {/*
+          * Only the delivery problem gets its own block. The link itself lives
+          * in "Active link" below — with one link per document, repeating the
+          * URL in a second box was the same value twice.
+          */}
+        {emailNotice ? (
+          <div className="space-y-1 rounded-md border border-warning/30 bg-warning/10 p-3">
+            <p className="text-xs font-medium">Link created — email not delivered</p>
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              {emailNotice}
             </p>
-            {emailNotice ? (
-              <p className="text-[11px] leading-relaxed text-muted-foreground">
-                {emailNotice}
-              </p>
-            ) : null}
-            <div className="flex gap-2">
-              <Input
-                readOnly
-                value={justCreated}
-                className="font-mono text-xs"
-                onFocus={(e) => e.target.select()}
-              />
-              <CopyButton value={justCreated} />
-            </div>
           </div>
         ) : null}
 
-        {/* Existing links */}
-        <div className="space-y-2">
-          <p className="text-xs font-medium text-muted-foreground">
-            Active links {shares.length > 0 ? `(${shares.length})` : ''}
-          </p>
+        {/* The single live link. Creating another revokes this one. */}
+        <div className="min-w-0 space-y-2">
+          <p className="text-xs font-medium text-muted-foreground">Active link</p>
 
           {isLoading ? (
             <div className="flex justify-center py-4">
               <Loader2 className="size-4 animate-spin text-muted-foreground" />
             </div>
-          ) : shares.length === 0 ? (
-            <p className="rounded-md border border-dashed border-border py-4 text-center text-xs text-muted-foreground">
-              No active links yet.
-            </p>
-          ) : (
-            <ul className="max-h-48 space-y-2 overflow-y-auto">
-              {shares.map((share) => (
-                <li
-                  key={share.id}
-                  className="flex items-start gap-2 rounded-md border border-border p-2.5"
-                >
-                  <div className="min-w-0 flex-1 space-y-1">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="truncate text-xs font-medium">
-                        {share.invitedEmail ?? 'Anyone with the link'}
-                      </span>
-                      <Badge
-                        variant={share.role === 'commenter' ? 'default' : 'outline'}
-                        className="px-1.5 py-0 text-[10px]"
-                      >
-                        {share.role === 'commenter' ? 'Can comment' : 'Read only'}
-                      </Badge>
-                      {share.isExpired ? (
-                        <Badge variant="destructive" className="px-1.5 py-0 text-[10px]">
-                          Expired
-                        </Badge>
-                      ) : null}
-                    </div>
-
-                    <p className="text-[10px] text-muted-foreground">
-                      Created{' '}
-                      {formatDistanceToNow(new Date(share.createdAt), { addSuffix: true })}
-                      {share.lastAccessedAt
-                        ? ` · opened ${formatDistanceToNow(new Date(share.lastAccessedAt), { addSuffix: true })}`
-                        : ' · never opened'}
-                    </p>
-
-                    {share.url ? (
-                      <p className="truncate font-mono text-[10px] text-muted-foreground">
-                        {share.url}
-                      </p>
-                    ) : (
-                      <p className="text-[10px] text-warning">
-                        Link cannot be shown — create a new one.
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="flex shrink-0 items-center gap-1">
-                    {share.url ? <CopyButton value={share.url} /> : null}
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      onClick={() => revoke(share.id)}
-                      aria-label="Revoke this link"
-                      title="Revoke"
-                      className="text-muted-foreground hover:text-destructive"
+          ) : active ? (
+            <div className="min-w-0 space-y-2 rounded-md border border-border p-3">
+              <div className="flex items-start gap-2">
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="truncate text-xs font-medium">
+                      {active.invitedEmail ?? 'Anyone with the link'}
+                    </span>
+                    <Badge
+                      variant={active.role === 'commenter' ? 'default' : 'outline'}
+                      className="px-1.5 py-0 text-[10px]"
                     >
-                      <Trash2 className="size-3.5" />
-                    </Button>
+                      {active.role === 'commenter' ? 'Can comment' : 'Read only'}
+                    </Badge>
                   </div>
-                </li>
-              ))}
-            </ul>
+
+                  <p className="text-[10px] text-muted-foreground">
+                    {active.expiresAt
+                      ? `Expires ${formatDistanceToNow(new Date(active.expiresAt), {
+                          addSuffix: true,
+                        })}`
+                      : 'Does not expire'}
+                    {active.lastAccessedAt
+                      ? ` · opened ${formatDistanceToNow(new Date(active.lastAccessedAt), {
+                          addSuffix: true,
+                        })}`
+                      : ' · never opened'}
+                  </p>
+                </div>
+
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => revoke(active.id)}
+                  aria-label="Revoke this link"
+                  title="Revoke"
+                  className="shrink-0 text-muted-foreground hover:text-destructive"
+                >
+                  <Trash2 className="size-3.5" />
+                </Button>
+              </div>
+
+              {active.url ? (
+                <div className="flex min-w-0 items-center gap-2">
+                  {/* break-all: an unbreakable token would otherwise widen the dialog. */}
+                  <code className="min-w-0 flex-1 break-all rounded bg-muted px-2 py-1.5 font-mono text-[10px] leading-relaxed text-muted-foreground">
+                    {active.url}
+                  </code>
+                  <CopyButton value={active.url} />
+                </div>
+              ) : (
+                <p className="text-[10px] text-warning">
+                  Link cannot be shown — create a new one.
+                </p>
+              )}
+            </div>
+          ) : (
+            <p className="rounded-md border border-dashed border-border py-4 text-center text-xs text-muted-foreground">
+              No active link. Create one above.
+            </p>
           )}
         </div>
+
       </DialogContent>
     </Dialog>
   );

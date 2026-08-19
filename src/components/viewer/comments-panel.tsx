@@ -23,6 +23,7 @@ type CommentNode = {
   parentId: string | null;
   authorName: string;
   isOwner: boolean;
+  isGuest: boolean;
   isMine: boolean;
   bodyHtml: string;
   pageNumber: number | null;
@@ -80,6 +81,16 @@ function CommentItem({
                 <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">
                   Owner
                 </Badge>
+              ) : null}
+              {comment.isGuest ? (
+                /*
+                 * Plain text rather than a badge: it qualifies the name instead
+                 * of decorating it, and a second pill next to "Owner" would
+                 * read as equal standing.
+                 */
+                <span className="shrink-0 text-[10px] text-muted-foreground">
+                  (guest)
+                </span>
               ) : null}
               <time
                 dateTime={comment.createdAt}

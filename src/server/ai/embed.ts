@@ -31,9 +31,9 @@ import { EMBEDDING_DIMENSIONS } from '@/server/db/schema';
  * that symmetric dense retrieval is weakest on.
  *
  * **Switching embedding providers invalidates stored vectors.** Embeddings from
- * different models occupy different vector spaces; comparing a Gemini-era chunk
- * vector against an OpenAI query vector produces meaningless similarity scores
- * rather than an error. Any document embedded under a previous provider must be
+ * different models occupy different vector spaces; comparing a chunk vector
+ * written by one provider against a query vector from another produces
+ * meaningless similarity scores rather than an error. Any document embedded under a previous provider must be
  * re-ingested. See the README migration note.
  */
 

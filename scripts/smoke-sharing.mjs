@@ -108,9 +108,15 @@ async function main() {
   await owner.click('button:has-text("Share")');
   await owner.waitForSelector('text=Share document', { timeout: 20_000 });
   await owner.click('button:has-text("Create a link to copy")');
-  await owner.waitForSelector('text=New link ready', { timeout: 30_000 });
+  // The URL lives in the single "Active link" block now, not a separate box.
+  await owner.waitForFunction(
+    () => !document.body.innerText.includes('No active link'),
+    undefined,
+    { timeout: 30_000 },
+  );
 
-  const shareUrl = await owner.inputValue('input[readonly]');
+  // Whitespace stripped: the link wraps with `break-all` for narrow dialogs.
+  const shareUrl = (await owner.locator('code').first().innerText()).replace(/\s+/g, '');
   const looksUnguessable = /\/s\/[A-Za-z0-9_-]{40,}$/.test(shareUrl);
   check('share link generated', Boolean(shareUrl), shareUrl.replace(/\/s\/.*/, '/s/<token>'));
   check('token is long and random', looksUnguessable, `${shareUrl.split('/s/')[1]?.length} chars`);
@@ -130,13 +136,19 @@ async function main() {
   const cookies = await guestCtx.cookies();
   check('guest has no session cookie', !cookies.some((c) => c.name === 'pdfiq_session'));
 
-  const sawPrompt = await guest.isVisible('#displayName');
-  check('asked only for a display name (no signup)', sawPrompt);
+  const sawPrompt = await guest.isVisible('#guestEmail');
+  check('offered guest entry without signup', sawPrompt);
+  check(
+    'sign-in alternative offered',
+    await guest.isVisible('a:has-text("Sign in to your account")'),
+  );
   const sawSummary = await guest.isVisible('text=AI summary');
   check('AI summary shown before entering', sawSummary);
 
-  await fillWhenLive(guest, '#displayName', 'Jordan Guest', 'button[type=submit]');
-  await guest.click('button:has-text("Open document")');
+  await guest.fill('#displayName', 'Jordan Guest');
+  // Email is what gates the submit button now, so it settles hydration.
+  await fillWhenLive(guest, '#guestEmail', 'jordan.guest@example.com', 'button[type=submit]');
+  await guest.click('button:has-text("Continue as guest")');
 
   step('Guest: full PDF renders');
   await guest.waitForSelector('canvas.react-pdf__Page__canvas', { timeout: 90_000 });
@@ -198,15 +210,23 @@ async function main() {
   await owner.waitForSelector('text=Share document', { timeout: 20_000 });
   await owner.click('button:has-text("Read only")');
   await owner.click('button:has-text("Create a link to copy")');
-  await owner.waitForSelector('text=New link ready', { timeout: 30_000 });
-  const readOnlyUrl = await owner.inputValue('input[readonly]');
+  await owner.waitForFunction(
+    (previous) => {
+      const el = document.querySelector('code');
+      return Boolean(el) && el.innerText.replace(/\s+/g, '') !== previous;
+    },
+    shareUrl,
+    { timeout: 30_000 },
+  );
+  const readOnlyUrl = (await owner.locator('code').first().innerText()).replace(/\s+/g, '');
   await owner.keyboard.press('Escape');
 
   const roCtx = await browser.newContext();
   const ro = await roCtx.newPage();
   await ro.goto(readOnlyUrl, { waitUntil: 'networkidle' });
-  await fillWhenLive(ro, '#displayName', 'Read Only Rita', 'button[type=submit]');
-  await ro.click('button:has-text("Open document")');
+  await ro.fill('#displayName', 'Read Only Rita');
+  await fillWhenLive(ro, '#guestEmail', 'rita@example.com', 'button[type=submit]');
+  await ro.click('button:has-text("Continue as guest")');
   await ro.waitForSelector('canvas.react-pdf__Page__canvas', { timeout: 90_000 });
   check('read-only visitor can view the PDF', true);
   await ro.getByRole('tab', { name: 'Comments' }).click();
@@ -219,8 +239,9 @@ async function main() {
 
   step('Revoking a link cuts off an active guest');
   await owner.click('button:has-text("Share")');
-  await owner.waitForSelector('text=Active links', { timeout: 20_000 });
-  // Revoke every active link.
+  // Section is singular now — one link is live at a time.
+  await owner.waitForSelector('text=Active link', { timeout: 20_000 });
+  // Revoke whatever is still live.
   for (;;) {
     const revoke = owner.locator('button[aria-label="Revoke this link"]').first();
     if ((await revoke.count()) === 0) break;

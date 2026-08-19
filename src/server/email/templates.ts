@@ -78,13 +78,13 @@ export function shareInviteEmail(params: {
              }. No account required.</p>`,
       cta: { href: params.url, label: 'Open document' },
       footer:
-        'Anyone with this link can open the document, so only forward it to people you trust. The sender can revoke it at any time.',
+        'This link expires one hour after it was created, and the sender can revoke it sooner. Anyone holding it can open the document, so only forward it to people you trust.',
     }),
     text: [
       `${params.sharerName} shared "${params.filename}" with you.`,
       params.summary ? `\nAI summary: ${params.summary}` : '',
       `\nOpen it here: ${params.url}`,
-      '\nNo account required. Anyone with this link can open the document.',
+      '\nNo account required. This link expires one hour after it was created.',
     ].join(''),
   };
 }

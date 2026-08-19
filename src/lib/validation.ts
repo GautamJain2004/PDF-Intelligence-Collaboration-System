@@ -86,6 +86,9 @@ export const searchSchema = z.object({
   q: z.string().trim().max(200).optional().default(''),
   /** `semantic` embeds the query; `filename` is a plain substring match. */
   mode: z.enum(['filename', 'semantic']).optional().default('filename'),
+  /** 1-based. Coerced because it arrives as a query string. */
+  page: z.coerce.number().int().min(1).max(10_000).optional().default(1),
+  status: z.enum(['all', 'ready', 'processing', 'failed']).optional().default('all'),
 });
 
 // ---------------------------------------------------------------------------
@@ -96,16 +99,28 @@ export const createShareSchema = z.object({
   /** Omitted for an open link; present to email a specific invitee. */
   email: emailSchema.optional(),
   role: z.enum(['viewer', 'commenter']).default('commenter'),
-  /** Optional link lifetime; null/omitted means it does not expire. */
-  expiresInDays: z.number().int().min(1).max(365).optional(),
 });
 
 export const guestJoinSchema = z.object({
+  /**
+   * Which button the visitor pressed. Sent explicitly because a live session no
+   * longer implies intent: someone signed in may deliberately choose to take
+   * part as a guest, and inferring from the cookie would override that.
+   */
+  mode: z.enum(['guest', 'account']).optional(),
+  /**
+   * Identifies a returning visitor so their name and comment attribution carry
+   * across share links. Never verified and never a credential — access comes
+   * from the share token alone.
+   */
+  email: emailSchema.optional(),
+  /** Optional: a remembered name is reused, and a new one is derived from the address. */
   displayName: z
     .string()
     .trim()
     .min(1, 'Please enter a name so others know who commented.')
-    .max(60, 'Name must be 60 characters or fewer.'),
+    .max(60, 'Name must be 60 characters or fewer.')
+    .optional(),
 });
 
 // ---------------------------------------------------------------------------

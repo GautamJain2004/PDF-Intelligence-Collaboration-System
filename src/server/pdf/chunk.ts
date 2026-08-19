@@ -43,8 +43,7 @@ const OVERLAP_TOKENS = 135;
 /**
  * Token estimate without a tokenizer dependency.
  *
- * English prose averages ~4 characters per token for Gemini and GPT-family
- * tokenizers. This is an approximation, so budgets are set conservatively
+ * English prose averages ~4 characters per token for GPT-family tokenizers. This is an approximation, so budgets are set conservatively
  * enough that a 10-15% error never overflows the model's context window.
  */
 export function estimateTokens(text: string): number {
