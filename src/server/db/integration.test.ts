@@ -21,7 +21,7 @@ if (TEST_DB) {
   process.env.AUTH_SECRET ??= 'integration-test-secret-at-least-32-chars';
   process.env.SUPABASE_URL ??= 'http://localhost:54321';
   process.env.SUPABASE_SERVICE_ROLE_KEY ??= 'test-key';
-  process.env.GOOGLE_GENERATIVE_AI_API_KEY ??= 'test-key';
+  process.env.OPENAI_API_KEY ??= 'test-openai-key';
   process.env.APP_URL ??= 'http://localhost:3000';
 }
 
@@ -138,16 +138,31 @@ describe.skipIf(!TEST_DB)('database integration', () => {
   describe('document listing scopes to the owner', () => {
     it('returns only the caller documents', async () => {
       const owned = await m.documents.listDocuments(ids.owner);
-      expect(owned.map((d) => d.id)).toContain(ids.document);
-      expect(owned.map((d) => d.id)).not.toContain(ids.otherDocument);
+      expect(owned.documents.map((d) => d.id)).toContain(ids.document);
+      expect(owned.documents.map((d) => d.id)).not.toContain(ids.otherDocument);
+      // The total counts every match, not just the rows on this page.
+      expect(owned.total).toBeGreaterThanOrEqual(owned.documents.length);
+    });
+
+    it('pages without losing or repeating rows', async () => {
+      const first = await m.documents.listDocuments(ids.owner, { limit: 1, offset: 0 });
+      const second = await m.documents.listDocuments(ids.owner, { limit: 1, offset: 1 });
+
+      expect(first.documents).toHaveLength(1);
+      // Both pages report the same total; only the window moves.
+      expect(second.total).toBe(first.total);
+      if (second.documents.length > 0) {
+        expect(second.documents[0]!.id).not.toBe(first.documents[0]!.id);
+      }
     });
 
     it('filters by filename case-insensitively', async () => {
       const hits = await m.documents.searchByFilename(ids.owner, 'employment');
-      expect(hits.map((d) => d.id)).toContain(ids.document);
+      expect(hits.documents.map((d) => d.id)).toContain(ids.document);
 
       const misses = await m.documents.searchByFilename(ids.owner, 'nonexistent-xyz');
-      expect(misses).toHaveLength(0);
+      expect(misses.documents).toHaveLength(0);
+      expect(misses.total).toBe(0);
     });
 
     it('does not leak another users document through search', async () => {
@@ -236,7 +251,6 @@ describe.skipIf(!TEST_DB)('database integration', () => {
         documentId: ids.document,
         createdBy: ids.owner,
         role: 'commenter',
-        expiresInDays: 1,
       });
       const token = share.url.split('/s/')[1]!;
 
@@ -300,7 +314,7 @@ describe.skipIf(!TEST_DB)('database integration', () => {
 
       const tree = await m.comments.listComments(
         ids.document,
-        { kind: 'owner', userId: ids.owner },
+        { kind: 'user', userId: ids.owner },
         ids.owner,
       );
 
@@ -315,7 +329,7 @@ describe.skipIf(!TEST_DB)('database integration', () => {
     it('marks another user comment as not mine', async () => {
       const tree = await m.comments.listComments(
         ids.document,
-        { kind: 'owner', userId: ids.otherUser },
+        { kind: 'user', userId: ids.otherUser },
         ids.owner,
       );
       expect(tree.every((c) => c.isMine === false)).toBe(true);
@@ -334,13 +348,13 @@ describe.skipIf(!TEST_DB)('database integration', () => {
       });
 
       const wrongUser = await m.comments.deleteOwnComment(comment.id, ids.document, {
-        kind: 'owner',
+        kind: 'user',
         userId: ids.otherUser,
       });
       expect(wrongUser).toBe(false);
 
       const rightUser = await m.comments.deleteOwnComment(comment.id, ids.document, {
-        kind: 'owner',
+        kind: 'user',
         userId: ids.owner,
       });
       expect(rightUser).toBe(true);
@@ -359,7 +373,7 @@ describe.skipIf(!TEST_DB)('database integration', () => {
       });
 
       await m.comments.deleteOwnComment(comment.id, ids.document, {
-        kind: 'owner',
+        kind: 'user',
         userId: ids.owner,
       });
 

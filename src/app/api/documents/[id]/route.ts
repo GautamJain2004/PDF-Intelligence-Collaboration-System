@@ -2,7 +2,12 @@ import { eq } from 'drizzle-orm';
 
 import { db } from '@/server/db/client';
 import { documents } from '@/server/db/schema';
-import { requireDocumentAccess, requireDocumentOwner } from '@/server/auth/access';
+import {
+  canComment,
+  requireDocumentAccess,
+  requireDocumentOwner,
+  viewerName,
+} from '@/server/auth/access';
 import { removeObject } from '@/server/storage/supabase';
 import { handleApiError, json } from '@/lib/api';
 
@@ -36,8 +41,8 @@ export async function GET(
       },
       access: {
         kind: access.kind,
-        canComment: access.kind === 'owner' || access.shareRole === 'commenter',
-        displayName: access.kind === 'owner' ? access.userName : access.displayName,
+        canComment: canComment(access),
+        displayName: viewerName(access),
       },
     });
   } catch (error) {

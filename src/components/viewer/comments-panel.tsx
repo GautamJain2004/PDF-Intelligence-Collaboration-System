@@ -3,11 +3,16 @@
 import * as React from 'react';
 import useSWR from 'swr';
 import { formatDistanceToNow } from 'date-fns';
-import { Loader2, MessageSquareText, Reply, Trash2 } from 'lucide-react';
+import {
+  Loader2,
+  MessageSquarePlus,
+  MessageSquareText,
+  Reply,
+  Trash2,
+} from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Avatar, Badge, EmptyState } from '@/components/ui/misc';
-import { Button } from '@/components/ui/button';
 import { CommentEditor } from './comment-editor';
 import { apiFetch, swrFetcher } from '@/lib/fetcher';
 import { cn } from '@/lib/utils';
@@ -17,6 +22,7 @@ type CommentNode = {
   parentId: string | null;
   authorName: string;
   isOwner: boolean;
+  isGuest: boolean;
   isMine: boolean;
   bodyHtml: string;
   pageNumber: number | null;
@@ -74,6 +80,16 @@ function CommentItem({
                 <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">
                   Owner
                 </Badge>
+              ) : null}
+              {comment.isGuest ? (
+                /*
+                 * Plain text rather than a badge: it qualifies the name instead
+                 * of decorating it, and a second pill next to "Owner" would
+                 * read as equal standing.
+                 */
+                <span className="shrink-0 text-[10px] text-muted-foreground">
+                  (guest)
+                </span>
               ) : null}
               <time
                 dateTime={comment.createdAt}
@@ -174,6 +190,7 @@ export function CommentsPanel({
   currentPage?: number;
 }) {
   const [replyingTo, setReplyingTo] = React.useState<string | null>(null);
+  const [composing, setComposing] = React.useState(false);
 
   const { data, isLoading, mutate } = useSWR<CommentsResponse>(
     `/api/documents/${documentId}/comments`,
@@ -213,9 +230,10 @@ export function CommentsPanel({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2.5">
-        <MessageSquareText className="size-4 text-primary" />
-        <h2 className="text-sm font-semibold">Comments</h2>
+      <div className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Thread
+        </h2>
         {total > 0 ? (
           <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
             {total}
@@ -259,11 +277,31 @@ export function CommentsPanel({
 
       {canComment ? (
         <div className="shrink-0 border-t border-border p-3">
-          <CommentEditor
-            compact
-            placeholder="Add a comment…"
-            onSubmit={(html) => post(html, null)}
-          />
+          {/*
+            Collapsed to a single control until used. Left permanently open, the
+            editor's toolbar, text area, and button row took ~150px of a ~300px
+            panel, leaving almost nothing for reading the thread it belongs to.
+          */}
+          {composing ? (
+            <CommentEditor
+              compact
+              autoFocus
+              placeholder="Add a comment…"
+              onCancel={() => setComposing(false)}
+              onSubmit={async (html) => {
+                await post(html, null);
+                setComposing(false);
+              }}
+            />
+          ) : (
+            <button
+              onClick={() => setComposing(true)}
+              className="flex w-full items-center gap-2 rounded-md border border-input bg-card px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <MessageSquarePlus className="size-3.5 shrink-0" />
+              Add a comment…
+            </button>
+          )}
         </div>
       ) : (
         <p className="shrink-0 border-t border-border px-4 py-3 text-xs text-muted-foreground">

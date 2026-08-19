@@ -1,4 +1,9 @@
-import { actorIdentity, canComment, requireDocumentAccess } from '@/server/auth/access';
+import {
+  actorIdentity,
+  canComment,
+  requireDocumentAccess,
+  viewerIdentity,
+} from '@/server/auth/access';
 import {
   createComment,
   listComments,
@@ -28,12 +33,7 @@ export async function GET(
     const { id } = await params;
     const access = await requireDocumentAccess(id);
 
-    const viewer =
-      access.kind === 'owner'
-        ? ({ kind: 'owner', userId: access.userId } as const)
-        : ({ kind: 'guest', guestId: access.guestId } as const);
-
-    const tree = await listComments(id, viewer, access.document.ownerId);
+    const tree = await listComments(id, viewerIdentity(access), access.document.ownerId);
 
     return json({ comments: tree, canComment: canComment(access) });
   } catch (error) {
@@ -95,6 +95,7 @@ export async function POST(
           parentId: comment.parentId,
           authorName: comment.authorName,
           isOwner: access.kind === 'owner',
+          isGuest: access.kind === 'guest',
           isMine: true,
           bodyHtml: comment.bodyHtml,
           pageNumber: comment.pageNumber,

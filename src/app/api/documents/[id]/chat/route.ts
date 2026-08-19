@@ -1,6 +1,6 @@
 import { streamText } from 'ai';
 
-import { requireDocumentAccess } from '@/server/auth/access';
+import { requireDocumentAccess, viewerIdentity } from '@/server/auth/access';
 import { chatModel } from '@/server/ai/provider';
 import { CHAT_SYSTEM_PROMPT, chatUserPrompt } from '@/server/ai/prompts';
 import { retrieveChunks } from '@/server/ai/retrieve';
@@ -22,9 +22,7 @@ export const maxDuration = 60;
 
 /** Derives the chat actor from resolved access. */
 function toActor(access: Awaited<ReturnType<typeof requireDocumentAccess>>): ChatActor {
-  return access.kind === 'owner'
-    ? { kind: 'user', userId: access.userId }
-    : { kind: 'guest', guestId: access.guestId };
+  return viewerIdentity(access);
 }
 
 /** Returns the caller's transcript so the panel survives a reload. */

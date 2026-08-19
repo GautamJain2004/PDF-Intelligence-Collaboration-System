@@ -40,16 +40,23 @@ export default async function DocumentPage({
 
   const doc = access.document;
 
+  /*
+   * The workspace fills the viewport minus the app header (h-14 + 1px border).
+   * Giving it h-dvh instead made the page 57px taller than the screen, so the
+   * bottom of the side panels — including the comment composer — sat below the
+   * fold on short laptop screens.
+   */
   return (
-    <DocumentWorkspace
-      documentId={doc.id}
-      filename={doc.filename}
-      summary={doc.summary}
-      status={doc.status}
-      pageCount={doc.pageCount}
-      canComment
-      viewerName={user.name}
-      isOwner={access.kind === 'owner'}
-    />
+    <div className="h-[calc(100dvh-3.5rem-1px)]">
+      <DocumentWorkspace
+        documentId={doc.id}
+        filename={doc.filename}
+        summary={doc.summary}
+        status={doc.status}
+        pageCount={doc.pageCount}
+        viewerName={user.name}
+        isOwner={access.kind === 'owner'}
+      />
+    </div>
   );
 }

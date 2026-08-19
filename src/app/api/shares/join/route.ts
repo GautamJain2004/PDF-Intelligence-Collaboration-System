@@ -1,7 +1,8 @@
 import { z } from 'zod';
 
-import { createGuestSession } from '@/server/auth/session';
+import { createGuestSession, getCurrentUser } from '@/server/auth/session';
 import { resolveShareToken, touchShare } from '@/server/documents/shares';
+import { resolveGuestIdentity } from '@/server/auth/guest-identity';
 import { guestJoinSchema } from '@/lib/validation';
 import { ApiError, clientIp, handleApiError, json, parseJson, rateLimited } from '@/lib/api';
 import { rateLimit } from '@/lib/rate-limit';
@@ -32,20 +33,61 @@ export async function POST(request: Request) {
     });
     if (!limit.ok) throw rateLimited('Too many attempts. Please try again shortly.');
 
-    const { token, displayName } = await parseJson(request, joinSchema);
+    const { token, email, displayName, mode } = await parseJson(request, joinSchema);
 
     const share = await resolveShareToken(token);
     if (!share) {
       throw new ApiError(404, 'This link is invalid, has expired, or was revoked.');
     }
 
-    const guest = await createGuestSession(share.shareId, displayName);
+    /*
+     * Resolved only AFTER the token checks out. Doing it first would let anyone
+     * create identity rows — and probe which addresses already exist — without
+     * holding a valid link.
+     */
+    const user = await getCurrentUser();
+
+    /*
+     * Intent, not the cookie, decides.
+     *
+     * A signed-in visitor who chose "continue as guest" gets a guest identity —
+     * their typed name, their "(guest)" tag. Only an explicit account choice
+     * (or an older client that sent no mode and no email) resolves through the
+     * session. Reading the session first is what made a deliberate guest entry
+     * silently reattach to the account.
+     */
+    const asAccount = mode === 'account' || (!mode && !email);
+
+    if (user && asAccount) {
+      await createGuestSession(share.shareId, user.name, null);
+      await touchShare(share.shareId);
+
+      return json({
+        documentId: share.documentId,
+        role: share.role,
+        displayName: user.name,
+        returning: true,
+      });
+    }
+
+    if (!email) {
+      throw new ApiError(400, 'Please enter your email to continue as a guest.');
+    }
+
+    const identity = await resolveGuestIdentity(email, displayName);
+
+    const guest = await createGuestSession(
+      share.shareId,
+      identity.displayName,
+      identity.id,
+    );
     await touchShare(share.shareId);
 
     return json({
       documentId: share.documentId,
       role: share.role,
       displayName: guest.displayName,
+      returning: identity.returning,
     });
   } catch (error) {
     return handleApiError(error);
