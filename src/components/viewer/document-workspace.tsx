@@ -51,23 +51,23 @@ type DocumentResponse = {
 /** Below `lg`, exactly one of the PDF or the side panels is on screen. */
 type MobilePane = 'document' | 'panels';
 
-/** Below `xl`, the side panel area shows one of these at a time. */
+/** The side panel shows one of these at a time, at every breakpoint. */
 type SidePanel = 'chat' | 'comments';
 
 /**
  * The document workspace: PDF, summary, chat, and comments.
  *
- * Layout adapts rather than reflows awkwardly:
- *  - Desktop (xl+): PDF beside a fixed sidebar holding chat over comments.
- *  - Tablet (lg):   PDF beside a single sidebar, tabbed between chat/comments.
- *  - Mobile:        one pane at a time via a bottom tab bar, since three panes
- *                   in a phone viewport are unusable.
+ * Layout:
+ *  - `lg` and up: PDF beside a fixed-width sidebar, tabbed between chat and
+ *    comments so each gets the full column height.
+ *  - Below `lg`: one pane at a time via a bottom tab bar, since three panes in
+ *    a phone viewport are unusable.
  *
- * Critically, the chat and comment panels are each rendered EXACTLY ONCE and
- * shown or hidden with CSS. An earlier version placed them in three separate
- * breakpoint-specific containers, which mounted three live copies of each: three
- * chat transcript fetches per page load, three Tiptap editors, and three hidden
- * comment boxes that made the visible one ambiguous to click.
+ * Chat and comments were originally stacked together at `xl`. On a typical
+ * laptop (~850px tall) that left roughly 100px for the comment list once the
+ * panel header and composer were subtracted, so comment bodies were scrolled
+ * out of view and the chat's empty state was clipped. Tabbing gives each panel
+ * the whole column instead of splitting a height neither could use.
  *
  * Shared by the owner route and the guest share route; `isOwner` only controls
  * the share button and the back link.
@@ -78,7 +78,6 @@ export function DocumentWorkspace({
   summary: initialSummary,
   status: initialStatus,
   pageCount,
-  canComment,
   viewerName,
   isOwner,
 }: {
@@ -87,7 +86,6 @@ export function DocumentWorkspace({
   summary?: string | null;
   status?: 'uploading' | 'processing' | 'ready' | 'failed';
   pageCount?: number | null;
-  canComment: boolean;
   viewerName: string;
   isOwner: boolean;
 }) {
@@ -96,6 +94,7 @@ export function DocumentWorkspace({
   const [mobilePane, setMobilePane] = React.useState<MobilePane>('document');
   const [sidePanel, setSidePanel] = React.useState<SidePanel>('chat');
   const [shareOpen, setShareOpen] = React.useState(false);
+  const [summaryExpanded, setSummaryExpanded] = React.useState(false);
 
   // Poll only while the document is still being processed.
   const { data } = useSWR<DocumentResponse>(
@@ -142,7 +141,7 @@ export function DocumentWorkspace({
   );
 
   return (
-    <div className="flex h-dvh flex-col overflow-hidden">
+    <div className="flex h-full flex-col overflow-hidden">
       {/* Header */}
       <header className="shrink-0 border-b border-border bg-background">
         <div className="flex items-center gap-2 px-3 py-2 sm:px-4">
@@ -183,21 +182,43 @@ export function DocumentWorkspace({
           ) : null}
         </div>
 
-        {/* AI summary — required at the top of the viewer. */}
+        {/*
+          AI summary — required at the top of the viewer.
+
+          Clamped to two lines by default. Fully expanded it consumed ~110px of a
+          ~660px body, which is space the comment and chat panels need far more.
+        */}
         {summary ? (
-          <div className="border-t border-border bg-muted/40 px-3 py-2.5 sm:px-4">
-            <details className="group" open>
-              <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          <div className="border-t border-border bg-muted/30 px-3 py-2.5 sm:px-4">
+            {/*
+              Capped at a readable measure. Left unbounded the paragraph
+              stretched the full viewport — around 250 characters per line on a
+              wide monitor, which the eye cannot track back from — and pushed
+              the toggle so far right it read as unrelated to the text.
+            */}
+            <div className="flex max-w-[92ch] items-baseline gap-x-2.5 gap-y-1">
+              <span className="flex shrink-0 items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.09em] text-muted-foreground">
                 <Sparkles className="size-3 text-primary" />
-                AI summary
-                <span className="ml-auto text-[10px] font-normal normal-case opacity-60 group-open:hidden">
-                  show
-                </span>
-              </summary>
-              <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
+                <span className="hidden sm:inline">AI summary</span>
+              </span>
+
+              <p
+                className={cn(
+                  'min-w-0 flex-1 text-[13px] leading-[1.6] text-foreground/85',
+                  summaryExpanded ? '' : 'line-clamp-2',
+                )}
+              >
                 {summary}
               </p>
-            </details>
+
+              <button
+                onClick={() => setSummaryExpanded((v) => !v)}
+                className="shrink-0 rounded text-[11px] font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                aria-expanded={summaryExpanded}
+              >
+                {summaryExpanded ? 'Show less' : 'Show more'}
+              </button>
+            </div>
           </div>
         ) : status === 'failed' ? (
           <div className="flex items-start gap-2 border-t border-border bg-destructive/10 px-3 py-2.5 text-sm text-destructive sm:px-4">
@@ -205,7 +226,7 @@ export function DocumentWorkspace({
             <p>{doc?.error ?? 'This document could not be processed.'}</p>
           </div>
         ) : (
-          <div className="border-t border-border bg-muted/40 px-3 py-2.5 sm:px-4">
+          <div className="border-t border-border bg-muted/40 px-3 py-2 sm:px-4">
             <p className="flex items-center gap-2 text-xs text-muted-foreground">
               <Loader2 className="size-3 animate-spin" />
               Reading the document and writing a summary…
@@ -233,59 +254,53 @@ export function DocumentWorkspace({
 
         {/*
           Side panel area. Full-width below `lg`, a fixed column above it.
-          Holds the single chat and comments instances.
+          Holds the single chat and comments instances; the inactive one is
+          hidden rather than unmounted so its state and scroll position survive
+          tab switches.
         */}
         <aside
           className={cn(
             'min-h-0 flex-col border-border',
-            'lg:flex lg:w-[340px] lg:flex-none lg:border-l xl:w-[380px]',
+            'lg:flex lg:w-[360px] lg:flex-none lg:border-l xl:w-[400px]',
             mobilePane === 'panels' ? 'flex flex-1' : 'hidden',
           )}
         >
-          {/* Tabs only where the two panels have to share space (lg..xl). */}
           <div
             role="tablist"
             aria-label="Document panels"
-            className="flex shrink-0 border-b border-border xl:hidden"
+            className="flex shrink-0 border-b border-border"
           >
             {(
               [
-                { id: 'chat', label: 'Ask AI' },
-                { id: 'comments', label: 'Comments' },
+                { id: 'chat', label: 'Ask AI', icon: Sparkles },
+                { id: 'comments', label: 'Comments', icon: MessageSquareText },
               ] as const
-            ).map(({ id, label }) => (
+            ).map(({ id, label, icon: Icon }) => (
               <button
                 key={id}
                 role="tab"
                 aria-selected={sidePanel === id}
                 onClick={() => setSidePanel(id)}
                 className={cn(
-                  'flex-1 px-3 py-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
+                  'flex flex-1 items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
                   sidePanel === id
                     ? 'border-b-2 border-primary text-foreground'
                     : 'text-muted-foreground hover:text-foreground',
                 )}
               >
+                <Icon className="size-3.5" />
                 {label}
               </button>
             ))}
           </div>
 
-          {/* Chat: stacked above comments at xl, otherwise tab-gated. */}
-          <div
-            className={cn(
-              'min-h-0 flex-col xl:flex xl:flex-1 xl:border-b xl:border-border',
-              sidePanel === 'chat' ? 'flex flex-1' : 'hidden',
-            )}
-          >
+          <div className={cn('min-h-0 flex-1 flex-col', sidePanel === 'chat' ? 'flex' : 'hidden')}>
             {chat}
           </div>
-
-          {/* Comments: fixed share of the column at xl, otherwise tab-gated. */}
           <div
             className={cn(
-              'min-h-0 flex-col xl:flex xl:h-[45%] xl:flex-none',
-              sidePanel === 'comments' ? 'flex flex-1' : 'hidden',
+              'min-h-0 flex-1 flex-col',
+              sidePanel === 'comments' ? 'flex' : 'hidden',
             )}
           >
             {comments}
